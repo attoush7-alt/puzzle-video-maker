@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
-          python3 -m pip install --break-system-packages Pillow arabic-reshaper python-bidi
+          python3 -m pip install --break-system-packages Pillow
 
       - name: Validate
         env:
@@ -51,94 +51,122 @@ jobs:
           test -n "$Q"
           test -n "$A"
 
-      - name: Create Graphics
+      - name: Generate Graphics
         env:
           TITLE: ${{ inputs.title }}
           QUESTION: ${{ inputs.question }}
           ANSWER: ${{ inputs.answer }}
         run: |
           python3 - <<'PY'
-          import os, math, subprocess
+          import os, subprocess
           from PIL import Image, ImageDraw, ImageFont, ImageFilter
-          import arabic_reshaper
-          from bidi.algorithm import get_display
 
-          W,H=1080,1920
-          FONT=subprocess.check_output(
-              ["fc-match","-f","%{file}","Noto Sans Arabic"],
+          W, H = 1080, 1920
+
+          FONT = subprocess.check_output(
+              ["fc-match", "-f", "%{file}", "Noto Sans Arabic"],
               text=True
           ).strip()
 
-          WHITE=(245,250,255)
-          CYAN=(0,230,255)
-          GOLD=(255,200,65)
-          BLUE=(12,35,85)
-          BG=(4,8,22)
+          WHITE = (245, 250, 255)
+          CYAN = (0, 230, 255)
+          GOLD = (255, 200, 65)
+          BG = (4, 8, 22)
 
-          def font(s):
-              return ImageFont.truetype(FONT,s)
+          def font(size):
+              return ImageFont.truetype(FONT, size)
 
-          def ar(s):
-              return get_display(
-                  arabic_reshaper.reshape(str(s)),
-                  base_dir="R"
+          # Arabic text is passed as logical text.
+          # Pillow RAQM handles RTL layout, shaping and mixed text.
+          def measure(draw, text, ft):
+              box = draw.textbbox(
+                  (0, 0), text,
+                  font=ft,
+                  direction="rtl",
+                  language="ar"
+              )
+              return box[2] - box[0]
+
+          def draw_text(draw, xy, text, ft, color):
+              draw.text(
+                  xy,
+                  str(text),
+                  font=ft,
+                  fill=color,
+                  anchor="mm",
+                  direction="rtl",
+                  language="ar",
+                  stroke_width=2,
+                  stroke_fill=BG
               )
 
           def background():
-              im=Image.new("RGBA",(W,H),BG)
-              glow=Image.new("RGBA",(W,H),(0,0,0,0))
-              gd=ImageDraw.Draw(glow)
+              im = Image.new("RGBA", (W, H), BG)
+
+              glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              gd = ImageDraw.Draw(glow)
 
               gd.ellipse(
-                  (-250,100,1000,1100),
-                  fill=(0,90,220,100)
+                  (-250, 100, 1000, 1100),
+                  fill=(0, 90, 220, 100)
               )
+
               gd.ellipse(
-                  (300,800,1300,2100),
-                  fill=(0,60,150,100)
+                  (300, 800, 1300, 2100),
+                  fill=(0, 60, 150, 100)
               )
+
               gd.ellipse(
-                  (-400,1100,700,2100),
-                  fill=(90,20,160,70)
+                  (-400, 1100, 700, 2100),
+                  fill=(90, 20, 160, 70)
               )
 
-              glow=glow.filter(ImageFilter.GaussianBlur(180))
-              im=Image.alpha_composite(im,glow)
+              glow = glow.filter(ImageFilter.GaussianBlur(180))
+              im = Image.alpha_composite(im, glow)
 
-              d=ImageDraw.Draw(im)
+              d = ImageDraw.Draw(im)
 
-              # futuristic perspective grid
-              for y in range(950,1900,70):
-                  d.line((0,y,W,y),fill=(12,32,65,100),width=2)
-
-              for x in range(-1000,2200,120):
-                  d.line((W//2,900,x,H),fill=(12,32,65,100),width=2)
-
-              # floating geometric objects
-              for x,y,r in [
-                  (120,450,65),(930,570,90),
-                  (170,1350,70),(900,1400,65)
-              ]:
-                  d.ellipse(
-                      (x-r,y-r,x+r,y+r),
-                      outline=(0,100,180,180),
-                      width=4
-                  )
-                  d.ellipse(
-                      (x-r+12,y-r+12,x+r-12,y+r-12),
-                      outline=(0,50,110,180),
+              for y in range(950, 1900, 70):
+                  d.line(
+                      (0, y, W, y),
+                      fill=(12, 32, 65, 100),
                       width=2
                   )
 
-              # outer frame
+              for x in range(-1000, 2200, 120):
+                  d.line(
+                      (W//2, 900, x, H),
+                      fill=(12, 32, 65, 100),
+                      width=2
+                  )
+
+              for x, y, r in [
+                  (120, 450, 65),
+                  (930, 570, 90),
+                  (170, 1350, 70),
+                  (900, 1400, 65)
+              ]:
+                  d.ellipse(
+                      (x-r, y-r, x+r, y+r),
+                      outline=(0, 100, 180, 180),
+                      width=4
+                  )
+
+                  d.ellipse(
+                      (x-r+12, y-r+12, x+r-12, y+r-12),
+                      outline=(0, 50, 110, 180),
+                      width=2
+                  )
+
               d.rounded_rectangle(
-                  (30,30,1050,1890),
+                  (30, 30, 1050, 1890),
                   radius=55,
-                  outline=(20,80,150),
+                  outline=(20, 80, 150),
                   width=5
               )
+
               d.rounded_rectangle(
-                  (50,50,1030,1870),
+                  (50, 50, 1030, 1870),
                   radius=45,
                   outline=CYAN,
                   width=2
@@ -146,203 +174,191 @@ jobs:
 
               return im
 
-          def glow_panel(im,box,color):
-              x1,y1,x2,y2=box
+          def panel(im, box, color):
+              x1, y1, x2, y2 = box
 
-              shadow=Image.new("RGBA",(W,H),(0,0,0,0))
-              sd=ImageDraw.Draw(shadow)
+              shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              sd = ImageDraw.Draw(shadow)
 
               sd.rounded_rectangle(
-                  (x1+15,y1+25,x2+15,y2+25),
+                  (x1+15, y1+25, x2+15, y2+25),
                   radius=45,
-                  fill=(0,0,0,170)
+                  fill=(0, 0, 0, 170)
               )
 
-              shadow=shadow.filter(ImageFilter.GaussianBlur(35))
-              im=Image.alpha_composite(im,shadow)
+              shadow = shadow.filter(ImageFilter.GaussianBlur(35))
+              im = Image.alpha_composite(im, shadow)
 
-              layer=Image.new("RGBA",(W,H),(0,0,0,0))
-              ld=ImageDraw.Draw(layer)
+              layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              ld = ImageDraw.Draw(layer)
 
               ld.rounded_rectangle(
                   box,
                   radius=45,
-                  fill=(10,20,48,245),
+                  fill=(10, 20, 48, 245),
                   outline=color,
                   width=5
               )
 
               ld.rounded_rectangle(
-                  (x1+15,y1+15,x2-15,y2-15),
+                  (x1+15, y1+15, x2-15, y2-15),
                   radius=35,
-                  outline=(40,80,130,180),
+                  outline=(40, 80, 130, 180),
                   width=2
               )
 
-              im=Image.alpha_composite(im,layer)
+              im = Image.alpha_composite(im, layer)
 
-              edge=Image.new("RGBA",(W,H),(0,0,0,0))
-              ed=ImageDraw.Draw(edge)
+              edge = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              ed = ImageDraw.Draw(edge)
 
               ed.line(
-                  (x1+80,y1+5,x2-80,y1+5),
+                  (x1+80, y1+5, x2-80, y1+5),
                   fill=color,
                   width=5
               )
 
-              edge=edge.filter(ImageFilter.GaussianBlur(20))
-              im=Image.alpha_composite(im,edge)
+              edge = edge.filter(ImageFilter.GaussianBlur(20))
+              im = Image.alpha_composite(im, edge)
 
               return im
 
-          def centered(im,text,size,xy,color):
-              d=ImageDraw.Draw(im)
-              d.text(
-                  xy,
-                  ar(text),
-                  font=font(size),
-                  fill=color,
-                  anchor="mm",
-                  stroke_width=2,
-                  stroke_fill=(4,8,20)
+          def centered(im, text, size, xy, color):
+              d = ImageDraw.Draw(im)
+
+              draw_text(
+                  d, xy, text, font(size), color
               )
 
-          def wrap(text,size,width):
-              f=font(size)
-              words=str(text).split()
-              lines=[]
-              current=""
+          def wrap(text, ft, width):
+              draw = ImageDraw.Draw(
+                  Image.new("RGB", (10, 10))
+              )
+
+              words = str(text).split()
+              lines = []
+              current = ""
 
               for word in words:
-                  candidate=(current+" "+word).strip()
-                  shaped=ar(candidate)
-                  bb=f.getbbox(shaped)
-                  measured=bb[2]-bb[0]
+                  candidate = (current + " " + word).strip()
 
-                  if measured>width and current:
+                  if measure(draw, candidate, ft) > width and current:
                       lines.append(current)
-                      current=word
+                      current = word
                   else:
-                      current=candidate
+                      current = candidate
 
               if current:
                   lines.append(current)
 
               return lines
 
-          def paragraph(im,text,center_y,max_width):
-              chosen=None
+          def paragraph(im, text, center_y, max_width):
+              d = ImageDraw.Draw(im)
+              selected = None
 
-              for size in range(80,38,-2):
-                  lines=wrap(text,size,max_width)
-                  if len(lines)<=7:
-                      chosen=(size,lines)
+              for size in range(80, 38, -2):
+                  ft = font(size)
+                  lines = wrap(text, ft, max_width)
+
+                  if len(lines) <= 7:
+                      selected = (ft, lines)
                       break
 
-              if chosen is None:
-                  chosen=(38,wrap(text,38,max_width))
+              if selected is None:
+                  ft = font(38)
+                  selected = (ft, wrap(text, ft, max_width))
 
-              size,lines=chosen
-              f=font(size)
-              line_h=size+45
-              total=len(lines)*line_h
-              y=center_y-total/2+line_h/2
-              d=ImageDraw.Draw(im)
+              ft, lines = selected
+              line_h = ft.size + 45
+              total = len(lines) * line_h
+              y = center_y - total/2 + line_h/2
 
               for line in lines:
-                  d.text(
-                      (W//2,int(y)),
-                      ar(line),
-                      font=f,
-                      fill=WHITE,
-                      anchor="mm",
-                      stroke_width=2,
-                      stroke_fill=(4,8,20)
+                  draw_text(
+                      d,
+                      (W//2, int(y)),
+                      line,
+                      ft,
+                      WHITE
                   )
-                  y+=line_h
-
-          def badge(im,text,xy,color=GOLD):
-              im=glow_panel(
-                  im,
-                  (xy[0]-200,xy[1]-65,xy[0]+200,xy[1]+65),
-                  color
-              )
-              centered(im,text,48,xy,color)
-              return im
+                  y += line_h
 
           def base_scene(label):
-              im=background()
-              im=glow_panel(im,(140,170,940,370),GOLD)
-              centered(im,label,60,(W//2,270),GOLD)
+              im = background()
+              im = panel(im, (140, 170, 940, 370), GOLD)
+              centered(im, label, 60, (W//2, 270), GOLD)
 
-              im=glow_panel(im,(180,1510,900,1650),CYAN)
-              centered(im,"اختبر ذكاءك",52,(W//2,1580),GOLD)
+              im = panel(im, (180, 1510, 900, 1650), CYAN)
+              centered(im, "اختبر ذكاءك", 52, (W//2, 1580), GOLD)
+
               return im
 
           def create_intro():
-              im=base_scene("تحدي الذكاء")
-              im=glow_panel(im,(100,550,980,1350),CYAN)
-              paragraph(im,os.environ["TITLE"],950,790)
+              im = base_scene("تحدي الذكاء")
+              im = panel(im, (100, 550, 980, 1350), CYAN)
+              paragraph(im, os.environ["TITLE"], 950, 790)
               im.save("intro.png")
 
           def create_question():
-              im=base_scene("لغز اليوم")
-              im=glow_panel(im,(100,520,980,1390),CYAN)
-              paragraph(im,os.environ["QUESTION"],960,800)
+              im = base_scene("لغز اليوم")
+              im = panel(im, (100, 520, 980, 1390), CYAN)
+              paragraph(im, os.environ["QUESTION"], 960, 800)
               im.save("question.png")
 
           def create_answer():
-              im=base_scene("كشف الحل")
-              im=glow_panel(im,(100,520,980,1390),GOLD)
-              paragraph(im,os.environ["ANSWER"],960,800)
+              im = base_scene("كشف الحل")
+              im = panel(im, (100, 520, 980, 1390), GOLD)
+              paragraph(im, os.environ["ANSWER"], 960, 800)
               im.save("answer.png")
 
           def create_outro():
-              im=base_scene("شاركنا التحدي")
-              im=glow_panel(im,(100,550,980,1350),GOLD)
-              paragraph(im,"اكتب إجابتك في التعليقات",950,800)
+              im = base_scene("شاركنا التحدي")
+              im = panel(im, (100, 550, 980, 1350), GOLD)
+              paragraph(im, "اكتب إجابتك في التعليقات", 950, 800)
               im.save("outro.png")
 
           def create_timer(n):
-              im=base_scene("وقت التفكير")
+              im = base_scene("وقت التفكير")
+              im = panel(im, (150, 570, 930, 1350), CYAN)
 
-              im=glow_panel(
-                  im,(150,570,930,1350),CYAN
-              )
+              d = ImageDraw.Draw(im)
 
-              d=ImageDraw.Draw(im)
-
-              # circular timer
               d.ellipse(
-                  (220,640,860,1280),
-                  outline=(20,55,130),
+                  (220, 640, 860, 1280),
+                  outline=(20, 55, 130),
                   width=35
               )
 
               d.ellipse(
-                  (250,670,830,1250),
+                  (250, 670, 830, 1250),
                   outline=CYAN,
                   width=10
               )
 
-              # arc
               d.arc(
-                  (250,670,830,1250),
+                  (250, 670, 830, 1250),
                   start=-90,
                   end=-90+(n/7)*360,
                   fill=GOLD,
                   width=22
               )
 
-              centered(im,str(n),340,(W//2,960),WHITE)
+              centered(im, str(n), 340, (W//2, 960), WHITE)
               im.save(f"timer{n}.png")
+
+          if not ImageFont.truetype(FONT, 40).getname():
+              raise RuntimeError("Font error")
+
+          if not hasattr(ImageFont.core, "HAVE_RAQM") or not ImageFont.core.HAVE_RAQM:
+              raise RuntimeError("Pillow RAQM Arabic support unavailable")
 
           create_intro()
           create_question()
           create_answer()
           create_outro()
 
-          for n in range(7,0,-1):
+          for n in range(7, 0, -1):
               create_timer(n)
 
           PY
