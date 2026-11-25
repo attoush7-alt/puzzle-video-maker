@@ -51,8 +51,6 @@ jobs:
           test -n "$Q"
           test -n "$A"
           blender --version
-          ffmpeg -version
-          python3 -c "from PIL import ImageFont; print('Pillow ready')"
 
       - name: Generate 3D Environment
         run: |
@@ -95,7 +93,7 @@ jobs:
           dark=material("Dark Metal",(0.025,0.035,0.08),0.7,0.3)
           purple=material("Purple",(0.15,0.03,0.35),0.5,0.3,0.5)
 
-          def cube(loc,scale,mat,bevel=0.15):
+          def cube(loc,scale,mat, bevel=0.15):
               bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
               o=bpy.context.object
               o.dimensions=scale
@@ -129,14 +127,14 @@ jobs:
           # Floor
           cube((0,0,-0.25),(30,30,0.5),dark,0.1)
 
-          # Floor grid
+          # Perspective floor lines
           for x in range(-12,13,2):
               cube((x,0,0.015),(0.025,24,0.02),blue,0.01)
 
           for y in range(-12,13,2):
               cube((0,y,0.02),(24,0.025,0.02),blue,0.01)
 
-          # Floating cubes
+          # Floating 3D puzzle cubes
           positions=[
               (-4,3,4),(4,3,6),(-3,6,8),(3,7,3),
               (-5,1,9),(5,2,10),(-2,8,5),(2,9,8)
@@ -146,12 +144,12 @@ jobs:
               o=cube(p,(1.5,1.5,1.5),gold if i%3==0 else blue,0.22)
               o.rotation_euler=(0.3*i,0.2*i,0.4*i)
 
-          # Rings
+          # Large rings
           torus((0,5,7),3.2,0.12,cyan,(math.pi/2,0,0))
           torus((0,5,7),2.7,0.08,gold,(math.pi/2,0.3,0))
           torus((0,8,3),2.4,0.1,purple,(0.5,0.2,0))
 
-          # Spheres
+          # Floating spheres
           sphere((-4,4,7),(0.8,0.8,0.8),cyan)
           sphere((4,5,4),(0.65,0.65,0.65),gold)
           sphere((0,9,9),(1,1,1),purple)
@@ -238,6 +236,8 @@ jobs:
                   stroke_fill=BG
               )
 
+          # Transparent layer: the 3D Blender background
+          # will be composited behind these graphics.
           def background():
               im = Image.new("RGBA", (W, H), (0,0,0,0))
               d = ImageDraw.Draw(im)
@@ -255,6 +255,7 @@ jobs:
                   outline=(0,230,255,180),
                   width=2
               )
+
               return im
 
           def panel(im, box, color):
@@ -438,47 +439,35 @@ jobs:
           qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q_AUDIO")
           adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A_AUDIO")
 
-          silent() {
+          render() {
+            IMAGE="$1"
+            DURATION="$2"
+            AUDIO="$3"
+            OUTPUT="$4"
+
             ffmpeg -nostdin -y \
               -loop 1 -i /tmp/3d_background.png \
-              -loop 1 -i "$1" \
-              -f lavfi -i anullsrc=r=44100:cl=stereo \
-              -t "$2" \
-              -filter_complex \
-              "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
-              -map "[v]" -map 2:a \
+              -loop 1 -i "$IMAGE" \
+              ${AUDIO:+-i "$AUDIO"} \
+              -t "$DURATION" \
+              -filter_complex "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              -map "[v]" ${AUDIO:+-map 2:a} \
               -c:v libx264 -preset ultrafast -crf 22 \
-              -pix_fmt yuv420p \
-              -c:a aac -b:a 192k -ar 44100 -ac 2 \
-              "$3"
+              ${AUDIO:+-c:a aac -b:a 192k -ar 44100 -ac 2} \
+              "$OUTPUT"
           }
 
-          with_audio() {
-            ffmpeg -nostdin -y \
-              -loop 1 -i /tmp/3d_background.png \
-              -loop 1 -i "$1" \
-              -i "$2" \
-              -t "$3" \
-              -filter_complex \
-              "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
-              -map "[v]" -map 2:a \
-              -c:v libx264 -preset ultrafast -crf 22 \
-              -pix_fmt yuv420p \
-              -c:a aac -b:a 192k -ar 44100 -ac 2 \
-              "$4"
-          }
-
-          silent intro.png 2 segments/00.mp4
-          with_audio question.png "$Q_AUDIO" "$qdur" segments/01.mp4
+          render intro.png 2 "" segments/00.mp4
+          render question.png "$qdur" "$Q_AUDIO" segments/01.mp4
 
           i=2
           for n in 7 6 5 4 3 2 1; do
-            silent "timer${n}.png" 1 "segments/$(printf '%02d' $i).mp4"
+            render "timer${n}.png" 1 "" "segments/$(printf '%02d' $i).mp4"
             i=$((i+1))
           done
 
-          with_audio answer.png "$A_AUDIO" "$adur" segments/09.mp4
-          silent outro.png 3 segments/10.mp4
+          render answer.png "$adur" "$A_AUDIO" segments/09.mp4
+          render outro.png 3 "" segments/10.mp4
 
       - name: Merge
         run: |
@@ -520,3 +509,4 @@ jobs:
         with:
           name: puzzle-video
           path: puzzle-video.mp4
+          
