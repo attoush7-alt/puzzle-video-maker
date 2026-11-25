@@ -17,11 +17,11 @@ on:
         required: true
         default: "الإجابة الصحيحة"
       question_audio:
-        description: Question audio file
+        description: Question audio
         required: true
         default: "question.wav"
       answer_audio:
-        description: Answer audio file
+        description: Answer audio
         required: true
         default: "answer.wav"
 
@@ -33,111 +33,112 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
           python3 -m pip install --break-system-packages Pillow arabic-reshaper python-bidi
 
-      - name: Check audio
+      - name: Validate
         env:
-          Q_AUDIO: ${{ inputs.question_audio }}
-          A_AUDIO: ${{ inputs.answer_audio }}
-          QUESTION: ${{ inputs.question }}
-          ANSWER: ${{ inputs.answer }}
+          Q: ${{ inputs.question }}
+          A: ${{ inputs.answer }}
+          QA: ${{ inputs.question_audio }}
+          AA: ${{ inputs.answer_audio }}
         run: |
-          test -s "$Q_AUDIO"
-          test -s "$A_AUDIO"
-          test -n "$QUESTION"
-          test -n "$ANSWER"
-          ffprobe -v error "$Q_AUDIO"
-          ffprobe -v error "$A_AUDIO"
+          test -s "$QA"
+          test -s "$AA"
+          test -n "$Q"
+          test -n "$A"
 
-      - name: Generate cinematic graphics
+      - name: Create Graphics
         env:
           TITLE: ${{ inputs.title }}
           QUESTION: ${{ inputs.question }}
           ANSWER: ${{ inputs.answer }}
         run: |
           python3 - <<'PY'
-          import os
-          import subprocess
+          import os, math, subprocess
           from PIL import Image, ImageDraw, ImageFont, ImageFilter
           import arabic_reshaper
           from bidi.algorithm import get_display
 
-          W, H = 1080, 1920
-
-          FONT = subprocess.check_output(
-              ["fc-match", "-f", "%{file}", "Noto Sans Arabic"],
+          W,H=1080,1920
+          FONT=subprocess.check_output(
+              ["fc-match","-f","%{file}","Noto Sans Arabic"],
               text=True
           ).strip()
 
-          CYAN = (0, 230, 255)
-          GOLD = (255, 200, 65)
-          WHITE = (255, 255, 255)
-          BG = (5, 8, 22)
+          WHITE=(245,250,255)
+          CYAN=(0,230,255)
+          GOLD=(255,200,65)
+          BLUE=(12,35,85)
+          BG=(4,8,22)
 
-          def f(size):
-              return ImageFont.truetype(FONT, size)
+          def font(s):
+              return ImageFont.truetype(FONT,s)
 
-          # Arabic shaping and right-to-left display ONCE per string
-          def ar(text):
-              text = str(text)
-              reshaped = arabic_reshaper.reshape(text)
-              return get_display(reshaped, base_dir="R")
-
-          def glow_background():
-              im = Image.new("RGB", (W, H), BG)
-
-              glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-              gd = ImageDraw.Draw(glow)
-
-              gd.ellipse(
-                  (100, 200, 1000, 1100),
-                  fill=(0, 80, 180, 100)
-              )
-              gd.ellipse(
-                  (-200, 1000, 700, 2000),
-                  fill=(60, 20, 130, 80)
-              )
-              gd.ellipse(
-                  (500, 800, 1400, 1800),
-                  fill=(0, 100, 140, 65)
+          def ar(s):
+              return get_display(
+                  arabic_reshaper.reshape(str(s)),
+                  base_dir="R"
               )
 
-              glow = glow.filter(ImageFilter.GaussianBlur(180))
-              im = Image.alpha_composite(
-                  im.convert("RGBA"), glow
-              ).convert("RGB")
+          def background():
+              im=Image.new("RGBA",(W,H),BG)
+              glow=Image.new("RGBA",(W,H),(0,0,0,0))
+              gd=ImageDraw.Draw(glow)
 
-              d = ImageDraw.Draw(im)
+              gd.ellipse(
+                  (-250,100,1000,1100),
+                  fill=(0,90,220,100)
+              )
+              gd.ellipse(
+                  (300,800,1300,2100),
+                  fill=(0,60,150,100)
+              )
+              gd.ellipse(
+                  (-400,1100,700,2100),
+                  fill=(90,20,160,70)
+              )
 
-              for r in range(220, 900, 130):
+              glow=glow.filter(ImageFilter.GaussianBlur(180))
+              im=Image.alpha_composite(im,glow)
+
+              d=ImageDraw.Draw(im)
+
+              # futuristic perspective grid
+              for y in range(950,1900,70):
+                  d.line((0,y,W,y),fill=(12,32,65,100),width=2)
+
+              for x in range(-1000,2200,120):
+                  d.line((W//2,900,x,H),fill=(12,32,65,100),width=2)
+
+              # floating geometric objects
+              for x,y,r in [
+                  (120,450,65),(930,570,90),
+                  (170,1350,70),(900,1400,65)
+              ]:
                   d.ellipse(
-                      (W//2-r, H//2-r, W//2+r, H//2+r),
-                      outline=(12, 30, 65), width=2
+                      (x-r,y-r,x+r,y+r),
+                      outline=(0,100,180,180),
+                      width=4
+                  )
+                  d.ellipse(
+                      (x-r+12,y-r+12,x+r-12,y+r-12),
+                      outline=(0,50,110,180),
+                      width=2
                   )
 
-              d.polygon(
-                  [(80,500),(160,400),(240,500),(160,600)],
-                  outline=(0,80,130)
-              )
-
-              d.polygon(
-                  [(850,1250),(950,1150),(1030,1250),(950,1350)],
-                  outline=(30,40,100)
-              )
-
+              # outer frame
               d.rounded_rectangle(
-                  (35,35,W-35,H-35),
+                  (30,30,1050,1890),
                   radius=55,
-                  outline=(30,65,130),
+                  outline=(20,80,150),
                   width=5
               )
-
               d.rounded_rectangle(
-                  (55,55,W-55,H-55),
+                  (50,50,1030,1870),
                   radius=45,
                   outline=CYAN,
                   width=2
@@ -145,144 +146,208 @@ jobs:
 
               return im
 
-          def panel(d, box, outline=CYAN):
-              d.rounded_rectangle(
+          def glow_panel(im,box,color):
+              x1,y1,x2,y2=box
+
+              shadow=Image.new("RGBA",(W,H),(0,0,0,0))
+              sd=ImageDraw.Draw(shadow)
+
+              sd.rounded_rectangle(
+                  (x1+15,y1+25,x2+15,y2+25),
+                  radius=45,
+                  fill=(0,0,0,170)
+              )
+
+              shadow=shadow.filter(ImageFilter.GaussianBlur(35))
+              im=Image.alpha_composite(im,shadow)
+
+              layer=Image.new("RGBA",(W,H),(0,0,0,0))
+              ld=ImageDraw.Draw(layer)
+
+              ld.rounded_rectangle(
                   box,
                   radius=45,
-                  fill=(12,20,48),
-                  outline=outline,
+                  fill=(10,20,48,245),
+                  outline=color,
                   width=5
               )
 
-          def text_center(d, text, size, xy, color):
+              ld.rounded_rectangle(
+                  (x1+15,y1+15,x2-15,y2-15),
+                  radius=35,
+                  outline=(40,80,130,180),
+                  width=2
+              )
+
+              im=Image.alpha_composite(im,layer)
+
+              edge=Image.new("RGBA",(W,H),(0,0,0,0))
+              ed=ImageDraw.Draw(edge)
+
+              ed.line(
+                  (x1+80,y1+5,x2-80,y1+5),
+                  fill=color,
+                  width=5
+              )
+
+              edge=edge.filter(ImageFilter.GaussianBlur(20))
+              im=Image.alpha_composite(im,edge)
+
+              return im
+
+          def centered(im,text,size,xy,color):
+              d=ImageDraw.Draw(im)
               d.text(
                   xy,
                   ar(text),
-                  font=f(size),
+                  font=font(size),
                   fill=color,
                   anchor="mm",
                   stroke_width=2,
-                  stroke_fill=(5,8,20)
+                  stroke_fill=(4,8,20)
               )
 
-          # Wrap using the shaped version for measurement,
-          # but keep original logical text in the returned lines.
-          def wrap(text, font, width):
-              words = str(text).split()
-              lines = []
-              current = ""
+          def wrap(text,size,width):
+              f=font(size)
+              words=str(text).split()
+              lines=[]
+              current=""
 
               for word in words:
-                  test = (current+" "+word).strip()
-                  box = font.getbbox(ar(test))
-                  tw = box[2]-box[0]
+                  candidate=(current+" "+word).strip()
+                  shaped=ar(candidate)
+                  bb=f.getbbox(shaped)
+                  measured=bb[2]-bb[0]
 
-                  if tw > width and current:
+                  if measured>width and current:
                       lines.append(current)
-                      current = word
+                      current=word
                   else:
-                      current = test
+                      current=candidate
 
               if current:
                   lines.append(current)
 
               return lines
 
-          def draw_paragraph(d, text, center_y, max_width):
-              selected = None
+          def paragraph(im,text,center_y,max_width):
+              chosen=None
 
-              for size in range(82, 38, -4):
-                  font = f(size)
-                  lines = wrap(text, font, max_width)
-
-                  if len(lines) <= 8:
-                      selected = (font, lines)
+              for size in range(80,38,-2):
+                  lines=wrap(text,size,max_width)
+                  if len(lines)<=7:
+                      chosen=(size,lines)
                       break
 
-              if selected is None:
-                  font = f(40)
-                  selected = (font, wrap(text, font, max_width))
+              if chosen is None:
+                  chosen=(38,wrap(text,38,max_width))
 
-              font, lines = selected
-              line_height = font.size + 35
-              total = len(lines) * line_height
-              y = center_y-total/2+line_height/2
+              size,lines=chosen
+              f=font(size)
+              line_h=size+45
+              total=len(lines)*line_h
+              y=center_y-total/2+line_h/2
+              d=ImageDraw.Draw(im)
 
               for line in lines:
-                  # Shape and reorder each line only at drawing time
-                  display_line = ar(line)
-
                   d.text(
-                      (W//2, int(y)),
-                      display_line,
-                      font=font,
+                      (W//2,int(y)),
+                      ar(line),
+                      font=f,
                       fill=WHITE,
                       anchor="mm",
                       stroke_width=2,
-                      stroke_fill=(5,8,20)
+                      stroke_fill=(4,8,20)
                   )
+                  y+=line_h
 
-                  y += line_height
+          def badge(im,text,xy,color=GOLD):
+              im=glow_panel(
+                  im,
+                  (xy[0]-200,xy[1]-65,xy[0]+200,xy[1]+65),
+                  color
+              )
+              centered(im,text,48,xy,color)
+              return im
 
-          def header(d, label):
-              panel(d, (145,180,935,365), GOLD)
-              text_center(d, label, 58, (W//2,275), GOLD)
+          def base_scene(label):
+              im=background()
+              im=glow_panel(im,(140,170,940,370),GOLD)
+              centered(im,label,60,(W//2,270),GOLD)
 
-          def footer(d):
-              panel(d, (180,1500,900,1640), CYAN)
-              text_center(d, "اختبر ذكاءك", 52, (W//2,1570), GOLD)
+              im=glow_panel(im,(180,1510,900,1650),CYAN)
+              centered(im,"اختبر ذكاءك",52,(W//2,1580),GOLD)
+              return im
 
-          def create(label, text, filename, number=None):
-              im = glow_background()
-              d = ImageDraw.Draw(im)
+          def create_intro():
+              im=base_scene("تحدي الذكاء")
+              im=glow_panel(im,(100,550,980,1350),CYAN)
+              paragraph(im,os.environ["TITLE"],950,790)
+              im.save("intro.png")
 
-              header(d,label)
+          def create_question():
+              im=base_scene("لغز اليوم")
+              im=glow_panel(im,(100,520,980,1390),CYAN)
+              paragraph(im,os.environ["QUESTION"],960,800)
+              im.save("question.png")
 
-              if number is not None:
-                  d.ellipse(
-                      (150,570,930,1350),
-                      outline=(20,50,120),
-                      width=28
-                  )
+          def create_answer():
+              im=base_scene("كشف الحل")
+              im=glow_panel(im,(100,520,980,1390),GOLD)
+              paragraph(im,os.environ["ANSWER"],960,800)
+              im.save("answer.png")
 
-                  d.ellipse(
-                      (220,640,860,1280),
-                      outline=CYAN,
-                      width=10
-                  )
+          def create_outro():
+              im=base_scene("شاركنا التحدي")
+              im=glow_panel(im,(100,550,980,1350),GOLD)
+              paragraph(im,"اكتب إجابتك في التعليقات",950,800)
+              im.save("outro.png")
 
-                  text_center(
-                      d,str(number),350,(W//2,960),WHITE
-                  )
+          def create_timer(n):
+              im=base_scene("وقت التفكير")
 
-              else:
-                  panel(d,(100,520,980,1390),CYAN)
-                  draw_paragraph(d,text,960,800)
+              im=glow_panel(
+                  im,(150,570,930,1350),CYAN
+              )
 
-              footer(d)
-              im.save(filename)
+              d=ImageDraw.Draw(im)
 
-          title = os.environ["TITLE"]
-          question = os.environ["QUESTION"]
-          answer = os.environ["ANSWER"]
+              # circular timer
+              d.ellipse(
+                  (220,640,860,1280),
+                  outline=(20,55,130),
+                  width=35
+              )
 
-          if not question.strip():
-              raise ValueError("نص السؤال فارغ")
+              d.ellipse(
+                  (250,670,830,1250),
+                  outline=CYAN,
+                  width=10
+              )
 
-          if not answer.strip():
-              raise ValueError("نص الإجابة فارغ")
+              # arc
+              d.arc(
+                  (250,670,830,1250),
+                  start=-90,
+                  end=-90+(n/7)*360,
+                  fill=GOLD,
+                  width=22
+              )
 
-          create("تحدي الذكاء",title,"intro.png")
-          create("لغز اليوم",question,"question.png")
-          create("كشف الحل",answer,"answer.png")
-          create("شاركنا التحدي","اكتب إجابتك في التعليقات","outro.png")
+              centered(im,str(n),340,(W//2,960),WHITE)
+              im.save(f"timer{n}.png")
+
+          create_intro()
+          create_question()
+          create_answer()
+          create_outro()
 
           for n in range(7,0,-1):
-              create("وقت التفكير","",f"timer{n}.png",n)
+              create_timer(n)
 
           PY
 
-      - name: Render video segments
+      - name: Render
         env:
           Q_AUDIO: ${{ inputs.question_audio }}
           A_AUDIO: ${{ inputs.answer_audio }}
@@ -292,56 +357,43 @@ jobs:
           qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q_AUDIO")
           adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A_AUDIO")
 
-          render_silent() {
-            image="$1"
-            duration="$2"
-            output="$3"
-
+          silent() {
             ffmpeg -nostdin -y \
-              -loop 1 -i "$image" \
+              -loop 1 -i "$1" \
               -f lavfi -i anullsrc=r=44100:cl=stereo \
-              -t "$duration" \
-              -vf "zoompan=z='min(zoom+0.0005,1.05)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30" \
+              -t "$2" \
+              -vf "zoompan=z='min(zoom+0.0007,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,fade=t=in:st=0:d=0.25" \
               -map 0:v -map 1:a \
-              -c:v libx264 -preset ultrafast -crf 23 \
+              -c:v libx264 -preset ultrafast -crf 22 \
               -pix_fmt yuv420p -c:a aac -b:a 192k \
-              -ar 44100 -ac 2 \
-              "$output"
+              -ar 44100 -ac 2 "$3"
           }
 
-          render_audio() {
-            image="$1"
-            audio="$2"
-            duration="$3"
-            output="$4"
-
+          with_audio() {
             ffmpeg -nostdin -y \
-              -loop 1 -i "$image" \
-              -i "$audio" \
-              -t "$duration" \
-              -vf "zoompan=z='min(zoom+0.0005,1.05)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30" \
+              -loop 1 -i "$1" \
+              -i "$2" \
+              -t "$3" \
+              -vf "zoompan=z='min(zoom+0.0007,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,fade=t=in:st=0:d=0.25" \
               -map 0:v -map 1:a \
-              -c:v libx264 -preset ultrafast -crf 23 \
+              -c:v libx264 -preset ultrafast -crf 22 \
               -pix_fmt yuv420p -c:a aac -b:a 192k \
-              -ar 44100 -ac 2 \
-              "$output"
+              -ar 44100 -ac 2 "$4"
           }
 
-          render_silent intro.png 2 segments/00.mp4
-
-          render_audio question.png "$Q_AUDIO" "$qdur" segments/01.mp4
+          silent intro.png 2 segments/00.mp4
+          with_audio question.png "$Q_AUDIO" "$qdur" segments/01.mp4
 
           i=2
           for n in 7 6 5 4 3 2 1; do
-            render_silent "timer${n}.png" 1 "segments/$(printf '%02d' $i).mp4"
+            silent "timer${n}.png" 1 "segments/$(printf '%02d' $i).mp4"
             i=$((i+1))
           done
 
-          render_audio answer.png "$A_AUDIO" "$adur" segments/09.mp4
+          with_audio answer.png "$A_AUDIO" "$adur" segments/09.mp4
+          silent outro.png 3 segments/10.mp4
 
-          render_silent outro.png 3 segments/10.mp4
-
-      - name: Merge segments
+      - name: Merge
         run: |
           cat > concat.txt <<'EOF'
           file 'segments/00.mp4'
@@ -359,20 +411,16 @@ jobs:
 
           ffmpeg -nostdin -y \
             -f concat -safe 0 -i concat.txt \
-            -c:v libx264 -preset ultrafast -crf 23 \
+            -c:v libx264 -preset ultrafast -crf 22 \
             -pix_fmt yuv420p \
-            -c:a aac -b:a 192k -ar 44100 -ac 2 \
-            -movflags +faststart \
-            combined.mp4
+            -c:a aac -b:a 192k \
+            -movflags +faststart combined.mp4
 
-      - name: Final video
-        run: |
           ffmpeg -nostdin -y \
-            -i combined.mp4 \
-            -c copy -movflags +faststart \
-            puzzle-video.mp4
+            -i combined.mp4 -c copy \
+            -movflags +faststart puzzle-video.mp4
 
-      - name: Verify final audio
+      - name: Verify
         run: |
           ffprobe -v error \
             -select_streams a \
@@ -380,7 +428,7 @@ jobs:
             -of default=noprint_wrappers=1 \
             puzzle-video.mp4
 
-      - name: Upload video
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-video
