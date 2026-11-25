@@ -42,13 +42,14 @@ jobs:
       - name: Validate Files
         run: |
           set -e
-          test -f "${{ inputs.question_audio }}"
-          test -f "${{ inputs.answer_audio }}"
+          test -s "${{ inputs.question_audio }}"
+          test -s "${{ inputs.answer_audio }}"
           ffmpeg -version
           blender --version
 
       - name: Generate Animated 3D Environment
         run: |
+          set -e
           mkdir -p /tmp/3d_frames
 
           cat > scene.py <<'PY'
@@ -241,6 +242,7 @@ jobs:
 
       - name: Generate Graphics
         run: |
+          set -e
           cat > graphics.py <<'PY'
           from PIL import Image, ImageDraw, ImageFont
           import os
@@ -376,10 +378,26 @@ jobs:
           ffprobe -v error -show_entries format=duration final_video.mp4
           test -s final_video.mp4
 
+      - name: Verify Final Video
+        run: |
+          set -e
+          test -s final_video.mp4
+
+          echo "Checking final video..."
+          ffprobe -v error \
+            -show_entries format=duration \
+            -show_entries stream=codec_name \
+            -of default=noprint_wrappers=1 \
+            final_video.mp4
+
+          ls -lh final_video.mp4
+
       - name: Upload Video
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-video
           path: final_video.mp4
+          if-no-files-found: error
           retention-days: 7
+          compression-level: 0
           
