@@ -53,15 +53,16 @@ jobs:
           ffprobe -v error "$Q_AUDIO"
           ffprobe -v error "$A_AUDIO"
 
-      - name: Generate graphics
+      - name: Generate cinematic graphics
         env:
           TITLE: ${{ inputs.title }}
           QUESTION: ${{ inputs.question }}
           ANSWER: ${{ inputs.answer }}
         run: |
           python3 - <<'PY'
-          import os, subprocess, math
-          from PIL import Image, ImageDraw, ImageFont
+          import os
+          import subprocess
+          from PIL import Image, ImageDraw, ImageFont, ImageFilter
           import arabic_reshaper
           from bidi.algorithm import get_display
 
@@ -72,76 +73,111 @@ jobs:
               text=True
           ).strip()
 
-          CYAN = (0, 225, 255)
-          BLUE = (35, 90, 255)
-          GOLD = (255, 200, 60)
+          CYAN = (0, 230, 255)
+          GOLD = (255, 200, 65)
           WHITE = (255, 255, 255)
-          PURPLE = (105, 50, 190)
           BG = (5, 8, 22)
 
           def f(size):
               return ImageFont.truetype(FONT, size)
 
+          # Arabic shaping and right-to-left display ONCE per string
           def ar(text):
-              return get_display(
-                  arabic_reshaper.reshape(str(text))
+              text = str(text)
+              reshaped = arabic_reshaper.reshape(text)
+              return get_display(reshaped, base_dir="R")
+
+          def glow_background():
+              im = Image.new("RGB", (W, H), BG)
+
+              glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              gd = ImageDraw.Draw(glow)
+
+              gd.ellipse(
+                  (100, 200, 1000, 1100),
+                  fill=(0, 80, 180, 100)
+              )
+              gd.ellipse(
+                  (-200, 1000, 700, 2000),
+                  fill=(60, 20, 130, 80)
+              )
+              gd.ellipse(
+                  (500, 800, 1400, 1800),
+                  fill=(0, 100, 140, 65)
               )
 
-          def background():
-              im = Image.new("RGB", (W, H), BG)
+              glow = glow.filter(ImageFilter.GaussianBlur(180))
+              im = Image.alpha_composite(
+                  im.convert("RGBA"), glow
+              ).convert("RGB")
+
               d = ImageDraw.Draw(im)
 
-              for r in range(160, 950, 130):
+              for r in range(220, 900, 130):
                   d.ellipse(
                       (W//2-r, H//2-r, W//2+r, H//2+r),
-                      outline=(12, 24, 55), width=2
+                      outline=(12, 30, 65), width=2
                   )
+
+              d.polygon(
+                  [(80,500),(160,400),(240,500),(160,600)],
+                  outline=(0,80,130)
+              )
+
+              d.polygon(
+                  [(850,1250),(950,1150),(1030,1250),(950,1350)],
+                  outline=(30,40,100)
+              )
 
               d.rounded_rectangle(
                   (35,35,W-35,H-35),
                   radius=55,
-                  outline=(30,60,120),
-                  width=4
+                  outline=(30,65,130),
+                  width=5
               )
 
               d.rounded_rectangle(
                   (55,55,W-55,H-55),
                   radius=45,
                   outline=CYAN,
-                  width=3
+                  width=2
               )
-
-              d.line((100,440,980,440), fill=(20,45,100), width=3)
-              d.line((100,1450,980,1450), fill=(20,45,100), width=3)
 
               return im
 
-          def panel(d, box, outline=CYAN, fill=(12,20,48)):
+          def panel(d, box, outline=CYAN):
               d.rounded_rectangle(
-                  box, radius=42,
-                  fill=fill, outline=outline, width=4
+                  box,
+                  radius=45,
+                  fill=(12,20,48),
+                  outline=outline,
+                  width=5
               )
 
-          def centered(d, text, fnt, xy, color):
+          def text_center(d, text, size, xy, color):
               d.text(
-                  xy, ar(text), font=fnt,
-                  fill=color, anchor="mm",
+                  xy,
+                  ar(text),
+                  font=f(size),
+                  fill=color,
+                  anchor="mm",
                   stroke_width=2,
-                  stroke_fill=(4,8,20)
+                  stroke_fill=(5,8,20)
               )
 
-          def wrap(text, fnt, max_width):
+          # Wrap using the shaped version for measurement,
+          # but keep original logical text in the returned lines.
+          def wrap(text, font, width):
               words = str(text).split()
               lines = []
               current = ""
 
               for word in words:
                   test = (current+" "+word).strip()
-                  shown = ar(test)
-                  box = fnt.getbbox(shown)
-                  width = box[2]-box[0]
+                  box = font.getbbox(ar(test))
+                  tw = box[2]-box[0]
 
-                  if width > max_width and current:
+                  if tw > width and current:
                       lines.append(current)
                       current = word
                   else:
@@ -152,40 +188,52 @@ jobs:
 
               return lines
 
-          def paragraph(d, text, center_y, max_width=820):
-              chosen = None
+          def draw_paragraph(d, text, center_y, max_width):
+              selected = None
 
-              for size in range(82, 39, -4):
-                  fnt = f(size)
-                  lines = wrap(text, fnt, max_width)
+              for size in range(82, 38, -4):
+                  font = f(size)
+                  lines = wrap(text, font, max_width)
 
                   if len(lines) <= 8:
-                      chosen = (fnt, lines)
+                      selected = (font, lines)
                       break
 
-              if chosen is None:
-                  fnt = f(40)
-                  chosen = (fnt, wrap(text, fnt, max_width))
+              if selected is None:
+                  font = f(40)
+                  selected = (font, wrap(text, font, max_width))
 
-              fnt, lines = chosen
-              line_height = fnt.size + 32
-              total = len(lines)*line_height
+              font, lines = selected
+              line_height = font.size + 35
+              total = len(lines) * line_height
               y = center_y-total/2+line_height/2
 
               for line in lines:
-                  centered(d, line, fnt, (W//2,int(y)), WHITE)
+                  # Shape and reorder each line only at drawing time
+                  display_line = ar(line)
+
+                  d.text(
+                      (W//2, int(y)),
+                      display_line,
+                      font=font,
+                      fill=WHITE,
+                      anchor="mm",
+                      stroke_width=2,
+                      stroke_fill=(5,8,20)
+                  )
+
                   y += line_height
 
           def header(d, label):
-              panel(d,(145,180,935,365),GOLD,(12,25,60))
-              centered(d,label,f(58),(W//2,270),GOLD)
+              panel(d, (145,180,935,365), GOLD)
+              text_center(d, label, 58, (W//2,275), GOLD)
 
           def footer(d):
-              panel(d,(180,1500,900,1640),CYAN,(10,28,65))
-              centered(d,"اختبر ذكاءك",f(52),(W//2,1570),GOLD)
+              panel(d, (180,1500,900,1640), CYAN)
+              text_center(d, "اختبر ذكاءك", 52, (W//2,1570), GOLD)
 
-          def create(label,text,filename,number=None):
-              im = background()
+          def create(label, text, filename, number=None):
+              im = glow_background()
               d = ImageDraw.Draw(im)
 
               header(d,label)
@@ -193,16 +241,23 @@ jobs:
               if number is not None:
                   d.ellipse(
                       (150,570,930,1350),
-                      outline=(20,50,120),width=26
+                      outline=(20,50,120),
+                      width=28
                   )
+
                   d.ellipse(
                       (220,640,860,1280),
-                      outline=CYAN,width=10
+                      outline=CYAN,
+                      width=10
                   )
-                  centered(d,str(number),f(350),(W//2,960),WHITE)
+
+                  text_center(
+                      d,str(number),350,(W//2,960),WHITE
+                  )
+
               else:
-                  panel(d,(100,520,980,1390),CYAN,(10,18,45))
-                  paragraph(d,text,960,800)
+                  panel(d,(100,520,980,1390),CYAN)
+                  draw_paragraph(d,text,960,800)
 
               footer(d)
               im.save(filename)
@@ -213,6 +268,7 @@ jobs:
 
           if not question.strip():
               raise ValueError("نص السؤال فارغ")
+
           if not answer.strip():
               raise ValueError("نص الإجابة فارغ")
 
