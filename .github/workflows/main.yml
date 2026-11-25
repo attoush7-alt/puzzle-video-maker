@@ -35,21 +35,48 @@ jobs:
 
       - name: Install Tools
         run: |
+          set -e
+
           sudo apt-get update
-          sudo apt-get install -y ffmpeg blender fonts-dejavu-core fonts-noto-core
+
+          sudo apt-get install -y \
+            ffmpeg \
+            blender \
+            fonts-dejavu-core \
+            fonts-noto-core \
+            libegl1 \
+            libgl1 \
+            libgl1-mesa-dri \
+            libgles2 \
+            libgbm1 \
+            xvfb \
+            xauth
+
           pip install pillow
+
+          echo "Checking graphics libraries..."
+          ldconfig -p | grep -E 'libEGL.so.1|libGL.so.1'
+
+          blender --version
+          ffmpeg -version
 
       - name: Validate Files
         run: |
           set -e
+
           test -s "${{ inputs.question_audio }}"
           test -s "${{ inputs.answer_audio }}"
-          ffmpeg -version
-          blender --version
+
+          echo "Question audio found"
+          echo "Answer audio found"
+
+          ffprobe -v error "${{ inputs.question_audio }}"
+          ffprobe -v error "${{ inputs.answer_audio }}"
 
       - name: Generate Animated 3D Environment
         run: |
           set -e
+
           mkdir -p /tmp/3d_frames
 
           cat > scene.py <<'PY'
@@ -59,182 +86,241 @@ jobs:
           bpy.ops.object.select_all(action='SELECT')
           bpy.ops.object.delete(use_global=False)
 
-          scene=bpy.context.scene
-          scene.render.engine='BLENDER_EEVEE'
-          scene.render.resolution_x=1080
-          scene.render.resolution_y=1920
-          scene.render.resolution_percentage=100
-          scene.render.fps=30
-          scene.frame_start=1
-          scene.frame_end=180
+          scene = bpy.context.scene
+          scene.render.engine = 'BLENDER_EEVEE'
+          scene.render.resolution_x = 1080
+          scene.render.resolution_y = 1920
+          scene.render.resolution_percentage = 100
+          scene.render.fps = 30
+          scene.frame_start = 1
+          scene.frame_end = 180
 
-          scene.render.image_settings.file_format='PNG'
-          scene.render.film_transparent=False
+          scene.render.image_settings.file_format = 'PNG'
+          scene.render.film_transparent = False
 
-          world=bpy.data.worlds.new("PuzzleWorld")
-          scene.world=world
-          world.use_nodes=True
-          world.node_tree.nodes["Background"].inputs["Color"].default_value=(0.008,0.015,0.045,1)
-          world.node_tree.nodes["Background"].inputs["Strength"].default_value=0.5
+          world = bpy.data.worlds.new("PuzzleWorld")
+          scene.world = world
+          world.use_nodes = True
+          world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.008, 0.015, 0.045, 1)
+          world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.5
 
-          def material(name,color,metallic=0,roughness=0.3,emission=0):
-              m=bpy.data.materials.new(name)
-              m.diffuse_color=(*color,1)
-              m.use_nodes=True
-              bs=m.node_tree.nodes.get("Principled BSDF")
-              bs.inputs["Base Color"].default_value=(*color,1)
-              bs.inputs["Metallic"].default_value=metallic
-              bs.inputs["Roughness"].default_value=roughness
-              bs.inputs["Emission Color"].default_value=(*color,1)
-              bs.inputs["Emission Strength"].default_value=emission
+          def material(name, color, metallic=0, roughness=0.3, emission=0):
+              m = bpy.data.materials.new(name)
+              m.diffuse_color = (*color, 1)
+              m.use_nodes = True
+
+              bs = m.node_tree.nodes.get("Principled BSDF")
+              bs.inputs["Base Color"].default_value = (*color, 1)
+              bs.inputs["Metallic"].default_value = metallic
+              bs.inputs["Roughness"].default_value = roughness
+              bs.inputs["Emission Color"].default_value = (*color, 1)
+              bs.inputs["Emission Strength"].default_value = emission
+
               return m
 
-          blue=material("Neon Blue",(0.015,0.12,0.45),0.8,0.25,0.5)
-          cyan=material("Cyan",(0.02,0.5,0.8),0.6,0.2,2)
-          gold=material("Gold",(0.8,0.4,0.03),0.8,0.2,1)
-          dark=material("Dark Metal",(0.025,0.035,0.08),0.7,0.3)
-          purple=material("Purple",(0.15,0.03,0.35),0.5,0.3,0.5)
+          blue = material("Neon Blue", (0.015, 0.12, 0.45), 0.8, 0.25, 0.5)
+          cyan = material("Cyan", (0.02, 0.5, 0.8), 0.6, 0.2, 2)
+          gold = material("Gold", (0.8, 0.4, 0.03), 0.8, 0.2, 1)
+          dark = material("Dark Metal", (0.025, 0.035, 0.08), 0.7, 0.3)
+          purple = material("Purple", (0.15, 0.03, 0.35), 0.5, 0.3, 0.5)
 
-          def cube(loc,scale,mat,bevel=0.15):
-              bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
-              o=bpy.context.object
-              o.dimensions=scale
-              bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
-              o.data.materials.append(mat)
-              if bevel:
-                  mod=o.modifiers.new("Rounded edges","BEVEL")
-                  mod.width=bevel
-                  mod.segments=4
-                  o.modifiers.new("Normals","WEIGHTED_NORMAL")
-              return o
+          def cube(loc, scale, mat, bevel=0.15):
+              bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
 
-          def sphere(loc,scale,mat):
-              bpy.ops.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=loc)
-              o=bpy.context.object
-              o.scale=scale
-              o.data.materials.append(mat)
-              bpy.ops.object.shade_smooth()
-              return o
+              o = bpy.context.object
+              o.dimensions = scale
 
-          def torus(loc,major,minor,mat,rotation=(0,0,0)):
-              bpy.ops.mesh.primitive_torus_add(
-                  major_radius=major,minor_radius=minor,
-                  location=loc,rotation=rotation
+              bpy.ops.object.transform_apply(
+                  location=False,
+                  rotation=False,
+                  scale=True
               )
-              o=bpy.context.object
+
               o.data.materials.append(mat)
+
+              if bevel:
+                  mod = o.modifiers.new("Rounded edges", "BEVEL")
+                  mod.width = bevel
+                  mod.segments = 4
+                  o.modifiers.new("Normals", "WEIGHTED_NORMAL")
+
+              return o
+
+          def sphere(loc, scale, mat):
+              bpy.ops.mesh.primitive_uv_sphere_add(
+                  segments=32,
+                  ring_count=16,
+                  location=loc
+              )
+
+              o = bpy.context.object
+              o.scale = scale
+              o.data.materials.append(mat)
+
               bpy.ops.object.shade_smooth()
+
+              return o
+
+          def torus(loc, major, minor, mat, rotation=(0, 0, 0)):
+              bpy.ops.mesh.primitive_torus_add(
+                  major_radius=major,
+                  minor_radius=minor,
+                  location=loc,
+                  rotation=rotation
+              )
+
+              o = bpy.context.object
+              o.data.materials.append(mat)
+
+              bpy.ops.object.shade_smooth()
+
               return o
 
           # Floor
-          cube((0,0,-0.25),(30,30,0.5),dark,0.1)
+          cube((0, 0, -0.25), (30, 30, 0.5), dark, 0.1)
 
           # Neon floor grid
-          for x in range(-12,13,2):
-              cube((x,0,0.015),(0.025,24,0.02),blue,0.01)
+          for x in range(-12, 13, 2):
+              cube((x, 0, 0.015), (0.025, 24, 0.02), blue, 0.01)
 
-          for y in range(-12,13,2):
-              cube((0,y,0.02),(24,0.025,0.02),blue,0.01)
+          for y in range(-12, 13, 2):
+              cube((0, y, 0.02), (24, 0.025, 0.02), blue, 0.01)
 
           # Platforms
-          cube((0,5,1),(10,6,0.4),blue,0.2)
-          cube((0,5,1.25),(8,4,0.15),gold,0.1)
+          cube((0, 5, 1), (10, 6, 0.4), blue, 0.2)
+          cube((0, 5, 1.25), (8, 4, 0.15), gold, 0.1)
 
           # Animated cubes
-          positions=[
-              (-4,3,4),(4,3,6),(-3,6,8),(3,7,3),
-              (-5,1,9),(5,2,10),(-2,8,5),(2,9,8)
+          positions = [
+              (-4, 3, 4), (4, 3, 6),
+              (-3, 6, 8), (3, 7, 3),
+              (-5, 1, 9), (5, 2, 10),
+              (-2, 8, 5), (2, 9, 8)
           ]
 
-          for i,p in enumerate(positions):
-              o=cube(p,(1.5,1.5,1.5),gold if i%3==0 else blue,0.22)
-              o.rotation_euler=(0.3*i,0.2*i,0.4*i)
+          for i, p in enumerate(positions):
+              o = cube(
+                  p,
+                  (1.5, 1.5, 1.5),
+                  gold if i % 3 == 0 else blue,
+                  0.22
+              )
 
-              start_rot=o.rotation_euler[2]
-              o.rotation_euler[2]=start_rot+math.pi*2
-              o.keyframe_insert(data_path="rotation_euler",frame=180)
-              o.rotation_euler[2]=start_rot
-              o.keyframe_insert(data_path="rotation_euler",frame=1)
+              o.rotation_euler = (0.3*i, 0.2*i, 0.4*i)
 
-              start=o.location.z
-              o.location.z=start+0.8
-              o.keyframe_insert(data_path="location",frame=90)
-              o.location.z=start
-              o.keyframe_insert(data_path="location",frame=1)
-              o.location.z=start
-              o.keyframe_insert(data_path="location",frame=180)
+              start_rot = o.rotation_euler[2]
+
+              o.rotation_euler[2] = start_rot
+              o.keyframe_insert(data_path="rotation_euler", frame=1)
+
+              o.rotation_euler[2] = start_rot + math.pi * 2
+              o.keyframe_insert(data_path="rotation_euler", frame=180)
+
+              start = o.location.z
+
+              o.location.z = start
+              o.keyframe_insert(data_path="location", frame=1)
+
+              o.location.z = start + 0.8
+              o.keyframe_insert(data_path="location", frame=90)
+
+              o.location.z = start
+              o.keyframe_insert(data_path="location", frame=180)
 
           # Animated rings
-          ring1=torus((0,5,7),3.2,0.12,cyan,(math.pi/2,0,0))
-          ring2=torus((0,5,7),2.7,0.08,gold,(math.pi/2,0.3,0))
-          ring3=torus((0,8,3),2.4,0.1,purple,(0.5,0.2,0))
+          ring1 = torus((0, 5, 7), 3.2, 0.12, cyan, (math.pi/2, 0, 0))
+          ring2 = torus((0, 5, 7), 2.7, 0.08, gold, (math.pi/2, 0.3, 0))
+          ring3 = torus((0, 8, 3), 2.4, 0.1, purple, (0.5, 0.2, 0))
 
-          for ring in (ring1,ring2,ring3):
-              start_rot=ring.rotation_euler[2]
-              ring.rotation_euler[2]=start_rot+math.pi*2
-              ring.keyframe_insert(data_path="rotation_euler",frame=180)
-              ring.rotation_euler[2]=start_rot
-              ring.keyframe_insert(data_path="rotation_euler",frame=1)
+          for ring in (ring1, ring2, ring3):
+              start_rot = ring.rotation_euler[2]
+
+              ring.rotation_euler[2] = start_rot
+              ring.keyframe_insert(data_path="rotation_euler", frame=1)
+
+              ring.rotation_euler[2] = start_rot + math.pi * 2
+              ring.keyframe_insert(data_path="rotation_euler", frame=180)
 
           # Floating spheres
-          s1=sphere((-4,4,7),(0.8,0.8,0.8),cyan)
-          s2=sphere((4,5,4),(0.65,0.65,0.65),gold)
-          s3=sphere((0,9,9),(1,1,1),purple)
+          s1 = sphere((-4, 4, 7), (0.8, 0.8, 0.8), cyan)
+          s2 = sphere((4, 5, 4), (0.65, 0.65, 0.65), gold)
+          s3 = sphere((0, 9, 9), (1, 1, 1), purple)
 
-          for s in (s1,s2,s3):
-              start=s.location.z
-              s.location.z=start+1.2
-              s.keyframe_insert(data_path="location",frame=90)
-              s.location.z=start
-              s.keyframe_insert(data_path="location",frame=1)
-              s.location.z=start
-              s.keyframe_insert(data_path="location",frame=180)
+          for s in (s1, s2, s3):
+              start = s.location.z
+
+              s.location.z = start
+              s.keyframe_insert(data_path="location", frame=1)
+
+              s.location.z = start + 1.2
+              s.keyframe_insert(data_path="location", frame=90)
+
+              s.location.z = start
+              s.keyframe_insert(data_path="location", frame=180)
 
           # Lighting
-          def area_light(name,loc,power,color,size):
-              bpy.ops.object.light_add(type='AREA',location=loc)
-              l=bpy.context.object
-              l.name=name
-              l.data.energy=power
-              l.data.color=color
-              l.data.shape='DISK'
-              l.data.size=size
-              l.rotation_euler=(Vector((0,5,4))-l.location).to_track_quat('-Z','Y').to_euler()
+          def area_light(name, loc, power, color, size):
+              bpy.ops.object.light_add(type='AREA', location=loc)
 
-          area_light("Blue Key",(-8,-6,12),1800,(0.1,0.3,1),8)
-          area_light("Gold Rim",(8,5,12),2200,(1,0.55,0.1),7)
-          area_light("Cyan Fill",(0,10,10),1500,(0.1,0.8,1),6)
+              l = bpy.context.object
+              l.name = name
+              l.data.energy = power
+              l.data.color = color
+              l.data.shape = 'DISK'
+              l.data.size = size
+
+              l.rotation_euler = (
+                  Vector((0, 5, 4)) - l.location
+              ).to_track_quat('-Z', 'Y').to_euler()
+
+          area_light("Blue Key", (-8, -6, 12), 1800, (0.1, 0.3, 1), 8)
+          area_light("Gold Rim", (8, 5, 12), 2200, (1, 0.55, 0.1), 7)
+          area_light("Cyan Fill", (0, 10, 10), 1500, (0.1, 0.8, 1), 6)
 
           # Camera
-          bpy.ops.object.camera_add(location=(0,-17,9))
-          cam=bpy.context.object
-          cam.rotation_euler=(Vector((0,5,5))-cam.location).to_track_quat('-Z','Y').to_euler()
-          cam.data.lens=35
-          scene.camera=cam
+          bpy.ops.object.camera_add(location=(0, -17, 9))
+
+          cam = bpy.context.object
+
+          cam.rotation_euler = (
+              Vector((0, 5, 5)) - cam.location
+          ).to_track_quat('-Z', 'Y').to_euler()
+
+          cam.data.lens = 35
+          scene.camera = cam
 
           # Camera movement
-          cam.location.x=-1.5
-          cam.keyframe_insert(data_path="location",frame=1)
-          cam.location.x=1.5
-          cam.keyframe_insert(data_path="location",frame=180)
-          cam.location.x=0
-          cam.keyframe_insert(data_path="location",frame=90)
+          cam.location.x = -1.5
+          cam.keyframe_insert(data_path="location", frame=1)
 
-          scene.view_settings.view_transform='AgX'
-          scene.render.filepath='/tmp/3d_frames/frame_'
-          scene.render.image_settings.file_format='PNG'
-          scene.render.image_settings.color_mode='RGB'
+          cam.location.x = 0
+          cam.keyframe_insert(data_path="location", frame=90)
+
+          cam.location.x = 1.5
+          cam.keyframe_insert(data_path="location", frame=180)
+
+          scene.view_settings.view_transform = 'AgX'
+
+          scene.render.filepath = '/tmp/3d_frames/frame_'
+          scene.render.image_settings.file_format = 'PNG'
+          scene.render.image_settings.color_mode = 'RGB'
 
           bpy.ops.render.render(animation=True)
           PY
 
-          blender -b -t 2 --python scene.py
+          LIBGL_ALWAYS_SOFTWARE=1 \
+          MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+          EGL_PLATFORM=surfaceless \
+          xvfb-run -a blender -b -t 2 --python scene.py
 
           test -f /tmp/3d_frames/frame_0001.png
 
           ffmpeg -nostdin -y \
-            -framerate 30 -i /tmp/3d_frames/frame_%04d.png \
-            -c:v libx264 -preset ultrafast -crf 22 \
+            -framerate 30 \
+            -i /tmp/3d_frames/frame_%04d.png \
+            -c:v libx264 \
+            -preset ultrafast \
+            -crf 22 \
             -pix_fmt yuv420p \
             /tmp/3d_background.mp4
 
@@ -243,51 +329,57 @@ jobs:
       - name: Generate Graphics
         run: |
           set -e
+
           cat > graphics.py <<'PY'
           from PIL import Image, ImageDraw, ImageFont
           import os
 
-          W,H=1080,1920
-          os.makedirs("graphics",exist_ok=True)
+          W, H = 1080, 1920
+          os.makedirs("graphics", exist_ok=True)
 
-          font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+          font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
           def font(size):
-              return ImageFont.truetype(font_path,size)
+              return ImageFont.truetype(font_path, size)
 
-          def make(name,text,size=72,color=(255,255,255)):
-              im=Image.new("RGBA",(W,H),(0,0,0,0))
-              d=ImageDraw.Draw(im)
+          def make(name, text, size=72, color=(255, 255, 255)):
+              im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+              d = ImageDraw.Draw(im)
 
               d.rounded_rectangle(
-                  (70,400,1010,1500),
+                  (70, 400, 1010, 1500),
                   radius=65,
-                  fill=(8,15,40,225),
-                  outline=(0,180,255,255),
+                  fill=(8, 15, 40, 225),
+                  outline=(0, 180, 255, 255),
                   width=8
               )
 
               d.rounded_rectangle(
-                  (100,430,980,1470),
+                  (100, 430, 980, 1470),
                   radius=50,
-                  outline=(255,180,40,180),
+                  outline=(255, 180, 40, 180),
                   width=3
               )
 
-              lines=text.split("\n")
-              spacing=25
-              heights=[]
+              lines = text.split("\n")
+              spacing = 25
+              heights = []
 
               for line in lines:
-                  box=d.textbbox((0,0),line,font=font(size),direction="rtl")
-                  heights.append(box[3]-box[1])
+                  box = d.textbbox(
+                      (0, 0),
+                      line,
+                      font=font(size),
+                      direction="rtl"
+                  )
+                  heights.append(box[3] - box[1])
 
-              total=sum(heights)+spacing*(len(lines)-1)
-              y=(H-total)//2
+              total = sum(heights) + spacing * (len(lines) - 1)
+              y = (H - total) // 2
 
-              for line,h in zip(lines,heights):
+              for line, h in zip(lines, heights):
                   d.text(
-                      (W//2,y),
+                      (W // 2, y),
                       line,
                       font=font(size),
                       fill=color,
@@ -295,34 +387,43 @@ jobs:
                       direction="rtl",
                       language="ar",
                       stroke_width=2,
-                      stroke_fill=(0,0,0,180)
+                      stroke_fill=(0, 0, 0, 180)
                   )
-                  y+=h+spacing
 
-              im.save("graphics/"+name+".png")
+                  y += h + spacing
 
-          make("intro","اختبر ذكاءك",100,(255,200,50))
-          make("question",os.environ["QUESTION"],70)
-          make("answer",os.environ["ANSWER"],75,(255,210,60))
-          make("outro","هل استطعت الحل؟\nتابعنا للمزيد",65,(0,220,255))
+              im.save("graphics/" + name + ".png")
 
-          for n in range(7,0,-1):
-              make("timer"+str(n),str(n),220,(255,210,40))
+          make("intro", "اختبر ذكاءك", 100, (255, 200, 50))
+          make("question", os.environ["QUESTION"], 70)
+          make("answer", os.environ["ANSWER"], 75, (255, 210, 60))
+          make("outro", "هل استطعت الحل؟\nتابعنا للمزيد", 65, (0, 220, 255))
 
+          for n in range(7, 0, -1):
+              make("timer" + str(n), str(n), 220, (255, 210, 40))
           PY
 
-          QUESTION="${{ inputs.question }}" ANSWER="${{ inputs.answer }}" python graphics.py
+          QUESTION="${{ inputs.question }}" \
+          ANSWER="${{ inputs.answer }}" \
+          python graphics.py
 
       - name: Render Video Segments
+        shell: bash
         run: |
           set -e
+
           mkdir -p segments
 
           Q_AUDIO="${{ inputs.question_audio }}"
           A_AUDIO="${{ inputs.answer_audio }}"
 
-          qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q_AUDIO")
-          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A_AUDIO")
+          qdur=$(ffprobe -v error \
+            -show_entries format=duration \
+            -of csv=p=0 "$Q_AUDIO")
+
+          adur=$(ffprobe -v error \
+            -show_entries format=duration \
+            -of csv=p=0 "$A_AUDIO")
 
           render() {
             IMAGE="$1"
@@ -341,24 +442,41 @@ jobs:
               -loop 1 -framerate 30 -i "$IMAGE" \
               "${AUDIO_INPUT[@]}" \
               -t "$DURATION" \
-              -filter_complex "[0:v]format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
-              -map "[v]" -map 2:a \
-              -c:v libx264 -preset ultrafast -crf 22 \
-              -c:a aac -b:a 192k -ar 44100 -ac 2 \
+              -filter_complex \
+              "[0:v]format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              -map "[v]" \
+              -map 2:a \
+              -c:v libx264 \
+              -preset ultrafast \
+              -crf 22 \
+              -c:a aac \
+              -b:a 192k \
+              -ar 44100 \
+              -ac 2 \
               -pix_fmt yuv420p \
               "$OUTPUT"
           }
 
           render graphics/intro.png 2 "" segments/00.mp4
-          render graphics/question.png "$qdur" "$Q_AUDIO" segments/01.mp4
+
+          render graphics/question.png \
+            "$qdur" "$Q_AUDIO" segments/01.mp4
 
           i=2
+
           for n in 7 6 5 4 3 2 1; do
-            render "graphics/timer${n}.png" 1 "" "segments/$(printf '%02d' $i).mp4"
+            render \
+              "graphics/timer${n}.png" \
+              1 \
+              "" \
+              "segments/$(printf '%02d' "$i").mp4"
+
             i=$((i+1))
           done
 
-          render graphics/answer.png "$adur" "$A_AUDIO" segments/09.mp4
+          render graphics/answer.png \
+            "$adur" "$A_AUDIO" segments/09.mp4
+
           render graphics/outro.png 3 "" segments/10.mp4
 
       - name: Merge Video
@@ -372,18 +490,26 @@ jobs:
           done
 
           ffmpeg -nostdin -y \
-            -f concat -safe 0 -i concat.txt \
-            -c copy final_video.mp4
+            -f concat \
+            -safe 0 \
+            -i concat.txt \
+            -c copy \
+            final_video.mp4
 
-          ffprobe -v error -show_entries format=duration final_video.mp4
+          ffprobe -v error \
+            -show_entries format=duration \
+            final_video.mp4
+
           test -s final_video.mp4
 
       - name: Verify Final Video
         run: |
           set -e
+
           test -s final_video.mp4
 
           echo "Checking final video..."
+
           ffprobe -v error \
             -show_entries format=duration \
             -show_entries stream=codec_name \
