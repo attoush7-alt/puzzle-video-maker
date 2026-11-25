@@ -44,8 +44,10 @@ jobs:
           Q_AUDIO: ${{ inputs.question_audio }}
           A_AUDIO: ${{ inputs.answer_audio }}
         run: |
-          test -f "$Q_AUDIO"
-          test -f "$A_AUDIO"
+          test -s "$Q_AUDIO"
+          test -s "$A_AUDIO"
+          ffprobe -v error "$Q_AUDIO"
+          ffprobe -v error "$A_AUDIO"
 
       - name: Generate graphics
         env:
@@ -59,108 +61,135 @@ jobs:
 
           W, H = 1080, 1920
           FONT = "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"
+
           GOLD = (255, 195, 55)
           BLUE = (0, 210, 255)
           WHITE = (255, 255, 255)
+          MUTED = (180, 205, 235)
 
           def f(size):
               return ImageFont.truetype(FONT, size)
 
           def bg():
-              im = Image.new("RGB", (W, H))
-              p = im.load()
-              for y in range(H):
-                  for x in range(W):
-                      glow = max(0, 1 - abs(x-W//2)/(W*0.8))
-                      p[x,y] = (
-                          int(4+8*glow),
-                          int(8+18*glow),
-                          int(22+55*glow)
-                      )
+              im = Image.new("RGB", (W, H), (5, 10, 28))
+              d = ImageDraw.Draw(im)
+
+              d.rounded_rectangle(
+                  (35, 35, W-35, H-35),
+                  radius=55, outline=(20, 50, 100), width=18
+              )
+
+              d.rounded_rectangle(
+                  (55, 55, W-55, H-55),
+                  radius=45, outline=GOLD, width=5
+              )
+
+              d.ellipse(
+                  (-250, 100, 500, 850),
+                  fill=(10, 25, 55)
+              )
+              d.ellipse(
+                  (700, 1100, 1450, 1900),
+                  fill=(8, 25, 50)
+              )
+
               return im
 
           def wrap(text, font, width):
               words = text.split()
               lines = []
               line = ""
+
               for word in words:
-                  test = (line+" "+word).strip()
+                  test = (line + " " + word).strip()
                   box = font.getbbox(test, direction="rtl")
-                  if box[2]-box[0] > width and line:
+                  if box[2] - box[0] > width and line:
                       lines.append(line)
                       line = word
                   else:
                       line = test
+
               if line:
                   lines.append(line)
+
               return lines
 
           def centered(draw, text, font, y, color, width=850):
               lines = wrap(text, font, width)
-              line_h = font.size+30
-              total = len(lines)*line_h
-              y -= total//2
+              line_h = font.size + 35
+              total = len(lines) * line_h
+              y -= total // 2
+
               for line in lines:
                   box = draw.textbbox(
-                      (0,0),line,font=font,direction="rtl"
+                      (0, 0), line, font=font, direction="rtl"
                   )
-                  tw = box[2]-box[0]
+                  tw = box[2] - box[0]
+
                   draw.text(
-                      ((W-tw)//2,y),line,font=font,
-                      fill=color,direction="rtl",
-                      stroke_width=2,stroke_fill=(4,10,25)
+                      ((W-tw)//2, y),
+                      line,
+                      font=font,
+                      fill=color,
+                      direction="rtl",
+                      stroke_width=2,
+                      stroke_fill=(4, 10, 25)
                   )
                   y += line_h
 
-          def make(label,text,file,number=None):
+          def make(label, text, file, number=None, mode="normal"):
               im = bg()
               d = ImageDraw.Draw(im)
 
               d.rounded_rectangle(
-                  (35,35,W-35,H-35),
-                  radius=55,outline=(20,50,100),width=18
-              )
-              d.rounded_rectangle(
-                  (55,55,W-55,H-55),
-                  radius=45,outline=GOLD,width=5
+                  (150, 220, 930, 390),
+                  radius=55,
+                  fill=(12, 28, 65),
+                  outline=GOLD,
+                  width=5
               )
 
-              d.rounded_rectangle(
-                  (150,220,930,390),
-                  radius=55,fill=(12,28,65),
-                  outline=GOLD,width=5
-              )
-              centered(d,label,f(60),305,GOLD,700)
+              centered(d, label, f(60), 305, GOLD, 700)
 
               if number is not None:
                   d.ellipse(
-                      (170,580,910,1320),
-                      outline=(12,60,130),width=28
+                      (170, 580, 910, 1320),
+                      outline=(12, 60, 130),
+                      width=28
                   )
+
                   d.ellipse(
-                      (220,630,860,1270),
-                      outline=BLUE,width=12
+                      (220, 630, 860, 1270),
+                      outline=BLUE,
+                      width=12
                   )
-                  centered(d,str(number),f(350),950,WHITE,600)
+
+                  centered(d, str(number), f(350), 950, WHITE, 600)
+
               else:
-                  centered(d,text,f(90),960,WHITE,850)
+                  size = 85 if mode == "question" else 75
+                  centered(d, text, f(size), 960, WHITE, 850)
 
               d.rounded_rectangle(
-                  (170,1480,910,1620),
-                  radius=50,fill=(10,35,85),
-                  outline=BLUE,width=5
+                  (170, 1480, 910, 1620),
+                  radius=50,
+                  fill=(10, 35, 85),
+                  outline=BLUE,
+                  width=5
               )
-              centered(d,"اختبر ذكاءك",f(55),1550,GOLD,700)
+
+              centered(d, "اختبر ذكاءك", f(55), 1550, GOLD, 700)
 
               im.save(file)
 
-          make("تحدي الذكاء",os.environ["TITLE"],"intro.png")
-          make("السؤال",os.environ["QUESTION"],"question.png")
-          make("الإجابة",os.environ["ANSWER"],"answer.png")
-          make("شاركنا رأيك","اكتب إجابتك في التعليقات","outro.png")
+          make("تحدي الذكاء", os.environ["TITLE"], "intro.png")
+          make("السؤال", os.environ["QUESTION"], "question.png", mode="question")
+          make("الإجابة", os.environ["ANSWER"], "answer.png")
+          make("شاركنا رأيك", "اكتب إجابتك في التعليقات", "outro.png")
 
-          for n in range(7,0,-1):
-              make("فكر قبل الإجابة","",f"timer{n}.png",n)
+          for n in range(7, 0, -1):
+              make("فكر قبل الإجابة", "", f"timer{n}.png", n)
+
           PY
 
       - name: Render video segments
@@ -169,7 +198,6 @@ jobs:
           A_AUDIO: ${{ inputs.answer_audio }}
         run: |
           mkdir -p segments
-          : > concat.txt
 
           qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q_AUDIO")
           adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A_AUDIO")
@@ -186,7 +214,8 @@ jobs:
               -vf "zoompan=z='min(zoom+0.0007,1.07)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30" \
               -map 0:v -map 1:a \
               -c:v libx264 -preset ultrafast -crf 23 \
-              -pix_fmt yuv420p -c:a aac -b:a 128k \
+              -pix_fmt yuv420p -c:a aac -b:a 192k \
+              -ar 44100 -ac 2 \
               "$output"
           }
 
@@ -204,6 +233,7 @@ jobs:
               -map 0:v -map 1:a \
               -c:v libx264 -preset ultrafast -crf 23 \
               -pix_fmt yuv420p -c:a aac -b:a 192k \
+              -ar 44100 -ac 2 \
               "$output"
           }
 
@@ -221,19 +251,43 @@ jobs:
 
           render_silent outro.png 3 segments/10.mp4
 
-          for f in segments/*.mp4; do
-            echo "file '$f'" >> concat.txt
-          done
+      - name: Merge segments
+        run: |
+          cat > concat.txt <<'EOF'
+          file 'segments/00.mp4'
+          file 'segments/01.mp4'
+          file 'segments/02.mp4'
+          file 'segments/03.mp4'
+          file 'segments/04.mp4'
+          file 'segments/05.mp4'
+          file 'segments/06.mp4'
+          file 'segments/07.mp4'
+          file 'segments/08.mp4'
+          file 'segments/09.mp4'
+          file 'segments/10.mp4'
+          EOF
 
           ffmpeg -nostdin -y \
             -f concat -safe 0 -i concat.txt \
-            -c copy combined.mp4
+            -c:v libx264 -preset ultrafast -crf 23 \
+            -pix_fmt yuv420p \
+            -c:a aac -b:a 192k -ar 44100 -ac 2 \
+            -movflags +faststart \
+            combined.mp4
 
       - name: Final video
         run: |
           ffmpeg -nostdin -y \
             -i combined.mp4 \
             -c copy -movflags +faststart \
+            puzzle-video.mp4
+
+      - name: Verify final audio
+        run: |
+          ffprobe -v error \
+            -select_streams a \
+            -show_entries stream=codec_name,sample_rate \
+            -of default=noprint_wrappers=1 \
             puzzle-video.mp4
 
       - name: Upload video
