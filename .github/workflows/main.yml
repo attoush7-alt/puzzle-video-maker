@@ -36,7 +36,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra fonts-cairo
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
           python3 -m pip install --break-system-packages Pillow
 
       - name: Check audio
@@ -217,7 +217,7 @@ jobs:
             i=$((i+1))
           done
 
-          render_audio answer.png "$A_AUDIO" "$adur" "segments/09.mp4"
+          render_audio answer.png "$A_AUDIO" "$adur" segments/09.mp4
 
           render_silent outro.png 3 segments/10.mp4
 
