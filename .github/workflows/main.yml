@@ -1,3 +1,53 @@
+
+name: Create Puzzle Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Video title
+        required: true
+        default: "اختبر ذكاءك"
+      question:
+        description: Video puzzle question
+        required: true
+        default: "هل تستطيع حل هذا اللغز؟"
+      answer:
+        description: Correct answer
+        required: true
+        default: "الإجابة الصحيحة"
+      question_audio:
+        description: Question audio file
+        required: true
+        default: "question.wav"
+      answer_audio:
+        description: Answer audio file
+        required: true
+        default: "answer.wav"
+
+jobs:
+  create-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg blender fonts-dejavu-core fonts-noto-core
+          python -m pip install --upgrade pip
+          pip install pillow
+
+      - name: Validate Files
+        run: |
+          set -e
+          test -f "${{ inputs.question_audio }}"
+          test -f "${{ inputs.answer_audio }}"
+          ffmpeg -version
+          blender --version
+
       - name: Generate 3D Environment
         run: |
           cat > scene.py <<'PY'
@@ -39,8 +89,8 @@
           dark=material("Dark Metal",(0.025,0.035,0.08),0.7,0.3)
           purple=material("Purple",(0.15,0.03,0.35),0.5,0.3,0.5)
 
-          def cube(loc,scale,mat, bevel=0.15):
-              bpy.ops.object.mesh.primitive_cube_add(size=1,location=loc)
+          def cube(loc,scale,mat,bevel=0.15):
+              bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
               o=bpy.context.object
               o.dimensions=scale
               bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
@@ -53,7 +103,7 @@
               return o
 
           def sphere(loc,scale,mat):
-              bpy.ops.object.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=loc)
+              bpy.ops.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=loc)
               o=bpy.context.object
               o.scale=scale
               o.data.materials.append(mat)
@@ -70,17 +120,14 @@
               bpy.ops.object.shade_smooth()
               return o
 
-          # Floor
           cube((0,0,-0.25),(30,30,0.5),dark,0.1)
 
-          # Perspective floor lines
           for x in range(-12,13,2):
               cube((x,0,0.015),(0.025,24,0.02),blue,0.01)
 
           for y in range(-12,13,2):
               cube((0,y,0.02),(24,0.025,0.02),blue,0.01)
 
-          # Floating 3D puzzle cubes
           positions=[
               (-4,3,4),(4,3,6),(-3,6,8),(3,7,3),
               (-5,1,9),(5,2,10),(-2,8,5),(2,9,8)
@@ -90,21 +137,17 @@
               o=cube(p,(1.5,1.5,1.5),gold if i%3==0 else blue,0.22)
               o.rotation_euler=(0.3*i,0.2*i,0.4*i)
 
-          # Large rings
           torus((0,5,7),3.2,0.12,cyan,(math.pi/2,0,0))
           torus((0,5,7),2.7,0.08,gold,(math.pi/2,0.3,0))
           torus((0,8,3),2.4,0.1,purple,(0.5,0.2,0))
 
-          # Floating spheres
           sphere((-4,4,7),(0.8,0.8,0.8),cyan)
           sphere((4,5,4),(0.65,0.65,0.65),gold)
           sphere((0,9,9),(1,1,1),purple)
 
-          # Platforms
           cube((0,5,1),(10,6,0.4),blue,0.2)
           cube((0,5,1.25),(8,4,0.15),gold,0.1)
 
-          # Lighting
           def area_light(name,loc,power,color,size):
               bpy.ops.object.light_add(type='AREA',location=loc)
               l=bpy.context.object
@@ -119,7 +162,6 @@
           area_light("Gold Rim",(8,5,12),2200,(1,0.55,0.1),7)
           area_light("Cyan Fill",(0,10,10),1500,(0.1,0.8,1),6)
 
-          # Camera
           bpy.ops.object.camera_add(location=(0,-17,9))
           cam=bpy.context.object
           cam.rotation_euler=(Vector((0,5,5))-cam.location).to_track_quat('-Z','Y').to_euler()
@@ -134,3 +176,149 @@
           PY
 
           blender -b -t 2 --python scene.py
+
+          test -f /tmp/3d_background.png
+          ls -lh /tmp/3d_background.png
+
+      - name: Generate Graphics
+        run: |
+          cat > graphics.py <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          import os
+
+          W,H=1080,1920
+          os.makedirs("graphics",exist_ok=True)
+
+          font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+          if not os.path.exists(font_path):
+              font_path="/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"
+
+          def font(size):
+              return ImageFont.truetype(font_path,size)
+
+          def make(name,text,size=72,color=(255,255,255)):
+              im=Image.new("RGBA",(W,H),(0,0,0,0))
+              d=ImageDraw.Draw(im)
+
+              d.rounded_rectangle(
+                  (70,400,1010,1500),
+                  radius=65,
+                  fill=(8,15,40,225),
+                  outline=(0,180,255,255),
+                  width=8
+              )
+
+              d.rounded_rectangle(
+                  (100,430,980,1470),
+                  radius=50,
+                  outline=(255,180,40,180),
+                  width=3
+              )
+
+              lines=text.split("\n")
+              spacing=25
+              heights=[]
+              for line in lines:
+                  box=d.textbbox((0,0),line,font=font(size),direction="rtl")
+                  heights.append(box[3]-box[1])
+
+              total=sum(heights)+spacing*(len(lines)-1)
+              y=(H-total)//2
+
+              for line,h in zip(lines,heights):
+                  d.text(
+                      (W//2,y),
+                      line,
+                      font=font(size),
+                      fill=color,
+                      anchor="mt",
+                      direction="rtl",
+                      language="ar",
+                      stroke_width=2,
+                      stroke_fill=(0,0,0,180)
+                  )
+                  y+=h+spacing
+
+              im.save("graphics/"+name+".png")
+
+          make("intro","اختبر ذكاءك",100,(255,200,50))
+          make("question",os.environ["QUESTION"],70)
+          make("answer",os.environ["ANSWER"],75,(255,210,60))
+          make("outro","هل استطعت الحل؟\nتابعنا للمزيد",65,(0,220,255))
+
+          for n in range(7,0,-1):
+              make("timer"+str(n),str(n),220,(255,210,40))
+
+          PY
+
+          QUESTION="${{ inputs.question }}" ANSWER="${{ inputs.answer }}" python graphics.py
+
+      - name: Render Video Segments
+        run: |
+          set -e
+          mkdir -p segments
+
+          Q_AUDIO="${{ inputs.question_audio }}"
+          A_AUDIO="${{ inputs.answer_audio }}"
+
+          qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q_AUDIO")
+          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A_AUDIO")
+
+          render() {
+            IMAGE="$1"
+            DURATION="$2"
+            AUDIO="$3"
+            OUTPUT="$4"
+
+            if [ -n "$AUDIO" ]; then
+              AUDIO_INPUT=(-i "$AUDIO")
+            else
+              AUDIO_INPUT=(-f lavfi -i "anullsrc=r=44100:cl=stereo")
+            fi
+
+            ffmpeg -nostdin -y \
+              -loop 1 -framerate 30 -i /tmp/3d_background.png \
+              -loop 1 -framerate 30 -i "$IMAGE" \
+              "${AUDIO_INPUT[@]}" \
+              -t "$DURATION" \
+              -filter_complex "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              -map "[v]" -map 2:a \
+              -c:v libx264 -preset ultrafast -crf 22 \
+              -c:a aac -b:a 192k -ar 44100 -ac 2 \
+              -pix_fmt yuv420p \
+              "$OUTPUT"
+          }
+
+          render graphics/intro.png 2 "" segments/00.mp4
+          render graphics/question.png "$qdur" "$Q_AUDIO" segments/01.mp4
+
+          i=2
+          for n in 7 6 5 4 3 2 1; do
+            render "graphics/timer${n}.png" 1 "" "segments/$(printf '%02d' $i).mp4"
+            i=$((i+1))
+          done
+
+          render graphics/answer.png "$adur" "$A_AUDIO" segments/09.mp4
+          render graphics/outro.png 3 "" segments/10.mp4
+
+      - name: Merge Video
+        run: |
+          set -e
+          for f in segments/*.mp4; do
+            echo "file '$f'" >> concat.txt
+          done
+
+          ffmpeg -nostdin -y \
+            -f concat -safe 0 -i concat.txt \
+            -c copy final_video.mp4
+
+          ffprobe -v error -show_entries format=duration final_video.mp4
+          test -s final_video.mp4
+
+      - name: Upload Video
+        uses: actions/upload-artifact@v4
+        with:
+          name: puzzle-video
+          path: final_video.mp4
+          retention-days: 7
+          
