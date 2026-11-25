@@ -36,7 +36,7 @@ jobs:
       - name: Install
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra blender
           python3 -m pip install --break-system-packages Pillow
 
       - name: Validate
@@ -50,6 +50,146 @@ jobs:
           test -s "$AA"
           test -n "$Q"
           test -n "$A"
+          blender --version
+          ffmpeg -version
+          python3 -c "from PIL import ImageFont; print('Pillow ready')"
+
+      - name: Generate 3D Environment
+        run: |
+          cat > scene.py <<'PY'
+          import bpy, math
+          from mathutils import Vector
+
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False)
+
+          scene = bpy.context.scene
+          scene.render.engine = 'BLENDER_EEVEE_NEXT'
+          scene.render.resolution_x = 1080
+          scene.render.resolution_y = 1920
+          scene.render.resolution_percentage = 100
+          scene.render.image_settings.file_format = 'PNG'
+          scene.render.film_transparent = False
+
+          world = bpy.data.worlds.new("PuzzleWorld")
+          scene.world = world
+          world.use_nodes = True
+          world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.008,0.015,0.045,1)
+          world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.5
+
+          def material(name, color, metallic=0, roughness=0.3, emission=0):
+              m=bpy.data.materials.new(name)
+              m.diffuse_color=(*color,1)
+              m.use_nodes=True
+              bs=m.node_tree.nodes.get("Principled BSDF")
+              bs.inputs["Base Color"].default_value=(*color,1)
+              bs.inputs["Metallic"].default_value=metallic
+              bs.inputs["Roughness"].default_value=roughness
+              bs.inputs["Emission Color"].default_value=(*color,1)
+              bs.inputs["Emission Strength"].default_value=emission
+              return m
+
+          blue=material("Neon Blue",(0.015,0.12,0.45),0.8,0.25,0.5)
+          cyan=material("Cyan",(0.02,0.5,0.8),0.6,0.2,2)
+          gold=material("Gold",(0.8,0.4,0.03),0.8,0.2,1)
+          dark=material("Dark Metal",(0.025,0.035,0.08),0.7,0.3)
+          purple=material("Purple",(0.15,0.03,0.35),0.5,0.3,0.5)
+
+          def cube(loc,scale,mat,bevel=0.15):
+              bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
+              o=bpy.context.object
+              o.dimensions=scale
+              bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
+              o.data.materials.append(mat)
+              if bevel:
+                  mod=o.modifiers.new("Rounded edges","BEVEL")
+                  mod.width=bevel
+                  mod.segments=4
+                  o.modifiers.new("Normals","WEIGHTED_NORMAL")
+              return o
+
+          def sphere(loc,scale,mat):
+              bpy.ops.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=loc)
+              o=bpy.context.object
+              o.scale=scale
+              o.data.materials.append(mat)
+              bpy.ops.object.shade_smooth()
+              return o
+
+          def torus(loc,major,minor,mat,rotation=(0,0,0)):
+              bpy.ops.mesh.primitive_torus_add(
+                  major_radius=major,minor_radius=minor,
+                  location=loc,rotation=rotation
+              )
+              o=bpy.context.object
+              o.data.materials.append(mat)
+              bpy.ops.object.shade_smooth()
+              return o
+
+          # Floor
+          cube((0,0,-0.25),(30,30,0.5),dark,0.1)
+
+          # Floor grid
+          for x in range(-12,13,2):
+              cube((x,0,0.015),(0.025,24,0.02),blue,0.01)
+
+          for y in range(-12,13,2):
+              cube((0,y,0.02),(24,0.025,0.02),blue,0.01)
+
+          # Floating cubes
+          positions=[
+              (-4,3,4),(4,3,6),(-3,6,8),(3,7,3),
+              (-5,1,9),(5,2,10),(-2,8,5),(2,9,8)
+          ]
+
+          for i,p in enumerate(positions):
+              o=cube(p,(1.5,1.5,1.5),gold if i%3==0 else blue,0.22)
+              o.rotation_euler=(0.3*i,0.2*i,0.4*i)
+
+          # Rings
+          torus((0,5,7),3.2,0.12,cyan,(math.pi/2,0,0))
+          torus((0,5,7),2.7,0.08,gold,(math.pi/2,0.3,0))
+          torus((0,8,3),2.4,0.1,purple,(0.5,0.2,0))
+
+          # Spheres
+          sphere((-4,4,7),(0.8,0.8,0.8),cyan)
+          sphere((4,5,4),(0.65,0.65,0.65),gold)
+          sphere((0,9,9),(1,1,1),purple)
+
+          # Platforms
+          cube((0,5,1),(10,6,0.4),blue,0.2)
+          cube((0,5,1.25),(8,4,0.15),gold,0.1)
+
+          # Lighting
+          def area_light(name,loc,power,color,size):
+              bpy.ops.object.light_add(type='AREA',location=loc)
+              l=bpy.context.object
+              l.name=name
+              l.data.energy=power
+              l.data.color=color
+              l.data.shape='DISK'
+              l.data.size=size
+              l.rotation_euler=(Vector((0,5,4))-l.location).to_track_quat('-Z','Y').to_euler()
+
+          area_light("Blue Key",(-8,-6,12),1800,(0.1,0.3,1),8)
+          area_light("Gold Rim",(8,5,12),2200,(1,0.55,0.1),7)
+          area_light("Cyan Fill",(0,10,10),1500,(0.1,0.8,1),6)
+
+          # Camera
+          bpy.ops.object.camera_add(location=(0,-17,9))
+          cam=bpy.context.object
+          cam.rotation_euler=(Vector((0,5,5))-cam.location).to_track_quat('-Z','Y').to_euler()
+          cam.data.lens=35
+          scene.camera=cam
+
+          scene.render.image_settings.color_mode='RGBA'
+          scene.view_settings.view_transform='AgX'
+          scene.render.filepath='/tmp/3d_background.png'
+
+          bpy.ops.render.render(write_still=True)
+          PY
+
+          blender -b -t 2 --python scene.py
 
       - name: Generate Graphics
         env:
@@ -76,8 +216,6 @@ jobs:
           def font(size):
               return ImageFont.truetype(FONT, size)
 
-          # Arabic text is passed as logical text.
-          # Pillow RAQM handles RTL layout, shaping and mixed text.
           def measure(draw, text, ft):
               box = draw.textbbox(
                   (0, 0), text,
@@ -101,77 +239,22 @@ jobs:
               )
 
           def background():
-              im = Image.new("RGBA", (W, H), BG)
-
-              glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-              gd = ImageDraw.Draw(glow)
-
-              gd.ellipse(
-                  (-250, 100, 1000, 1100),
-                  fill=(0, 90, 220, 100)
-              )
-
-              gd.ellipse(
-                  (300, 800, 1300, 2100),
-                  fill=(0, 60, 150, 100)
-              )
-
-              gd.ellipse(
-                  (-400, 1100, 700, 2100),
-                  fill=(90, 20, 160, 70)
-              )
-
-              glow = glow.filter(ImageFilter.GaussianBlur(180))
-              im = Image.alpha_composite(im, glow)
-
+              im = Image.new("RGBA", (W, H), (0,0,0,0))
               d = ImageDraw.Draw(im)
-
-              for y in range(950, 1900, 70):
-                  d.line(
-                      (0, y, W, y),
-                      fill=(12, 32, 65, 100),
-                      width=2
-                  )
-
-              for x in range(-1000, 2200, 120):
-                  d.line(
-                      (W//2, 900, x, H),
-                      fill=(12, 32, 65, 100),
-                      width=2
-                  )
-
-              for x, y, r in [
-                  (120, 450, 65),
-                  (930, 570, 90),
-                  (170, 1350, 70),
-                  (900, 1400, 65)
-              ]:
-                  d.ellipse(
-                      (x-r, y-r, x+r, y+r),
-                      outline=(0, 100, 180, 180),
-                      width=4
-                  )
-
-                  d.ellipse(
-                      (x-r+12, y-r+12, x+r-12, y+r-12),
-                      outline=(0, 50, 110, 180),
-                      width=2
-                  )
 
               d.rounded_rectangle(
                   (30, 30, 1050, 1890),
                   radius=55,
-                  outline=(20, 80, 150),
+                  outline=(20, 80, 150, 220),
                   width=5
               )
 
               d.rounded_rectangle(
                   (50, 50, 1030, 1870),
                   radius=45,
-                  outline=CYAN,
+                  outline=(0,230,255,180),
                   width=2
               )
-
               return im
 
           def panel(im, box, color):
@@ -195,7 +278,7 @@ jobs:
               ld.rounded_rectangle(
                   box,
                   radius=45,
-                  fill=(10, 20, 48, 245),
+                  fill=(10, 20, 48, 230),
                   outline=color,
                   width=5
               )
@@ -225,16 +308,10 @@ jobs:
 
           def centered(im, text, size, xy, color):
               d = ImageDraw.Draw(im)
-
-              draw_text(
-                  d, xy, text, font(size), color
-              )
+              draw_text(d, xy, text, font(size), color)
 
           def wrap(text, ft, width):
-              draw = ImageDraw.Draw(
-                  Image.new("RGB", (10, 10))
-              )
-
+              draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
               words = str(text).split()
               lines = []
               current = ""
@@ -275,13 +352,7 @@ jobs:
               y = center_y - total/2 + line_h/2
 
               for line in lines:
-                  draw_text(
-                      d,
-                      (W//2, int(y)),
-                      line,
-                      ft,
-                      WHITE
-                  )
+                  draw_text(d, (W//2, int(y)), line, ft, WHITE)
                   y += line_h
 
           def base_scene(label):
@@ -291,7 +362,6 @@ jobs:
 
               im = panel(im, (180, 1510, 900, 1650), CYAN)
               centered(im, "اختبر ذكاءك", 52, (W//2, 1580), GOLD)
-
               return im
 
           def create_intro():
@@ -321,7 +391,6 @@ jobs:
           def create_timer(n):
               im = base_scene("وقت التفكير")
               im = panel(im, (150, 570, 930, 1350), CYAN)
-
               d = ImageDraw.Draw(im)
 
               d.ellipse(
@@ -347,10 +416,7 @@ jobs:
               centered(im, str(n), 340, (W//2, 960), WHITE)
               im.save(f"timer{n}.png")
 
-          if not ImageFont.truetype(FONT, 40).getname():
-              raise RuntimeError("Font error")
-
-          if not hasattr(ImageFont.core, "HAVE_RAQM") or not ImageFont.core.HAVE_RAQM:
+          if not getattr(ImageFont.core, "HAVE_RAQM", False):
               raise RuntimeError("Pillow RAQM Arabic support unavailable")
 
           create_intro()
@@ -360,7 +426,6 @@ jobs:
 
           for n in range(7, 0, -1):
               create_timer(n)
-
           PY
 
       - name: Render
@@ -375,26 +440,32 @@ jobs:
 
           silent() {
             ffmpeg -nostdin -y \
+              -loop 1 -i /tmp/3d_background.png \
               -loop 1 -i "$1" \
               -f lavfi -i anullsrc=r=44100:cl=stereo \
               -t "$2" \
-              -vf "zoompan=z='min(zoom+0.0007,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,fade=t=in:st=0:d=0.25" \
-              -map 0:v -map 1:a \
+              -filter_complex \
+              "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              -map "[v]" -map 2:a \
               -c:v libx264 -preset ultrafast -crf 22 \
-              -pix_fmt yuv420p -c:a aac -b:a 192k \
-              -ar 44100 -ac 2 "$3"
+              -pix_fmt yuv420p \
+              -c:a aac -b:a 192k -ar 44100 -ac 2 \
+              "$3"
           }
 
           with_audio() {
             ffmpeg -nostdin -y \
+              -loop 1 -i /tmp/3d_background.png \
               -loop 1 -i "$1" \
               -i "$2" \
               -t "$3" \
-              -vf "zoompan=z='min(zoom+0.0007,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,fade=t=in:st=0:d=0.25" \
-              -map 0:v -map 1:a \
+              -filter_complex \
+              "[0:v]zoompan=z='min(zoom+0.0005,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              -map "[v]" -map 2:a \
               -c:v libx264 -preset ultrafast -crf 22 \
-              -pix_fmt yuv420p -c:a aac -b:a 192k \
-              -ar 44100 -ac 2 "$4"
+              -pix_fmt yuv420p \
+              -c:a aac -b:a 192k -ar 44100 -ac 2 \
+              "$4"
           }
 
           silent intro.png 2 segments/00.mp4
@@ -449,4 +520,3 @@ jobs:
         with:
           name: puzzle-video
           path: puzzle-video.mp4
-          
