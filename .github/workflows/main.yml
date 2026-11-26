@@ -73,11 +73,8 @@ jobs:
 
           scene = bpy.context.scene
           scene.render.engine = 'BLENDER_EEVEE'
-          scene.eevee.use_gtao = True
-          scene.eevee.gtao_distance = 3
-          scene.eevee.gtao_factor = 1.25
 
-          # Render settings
+          # Blender 5 compatible settings
           scene.render.resolution_x = 720
           scene.render.resolution_y = 1280
           scene.render.resolution_percentage = 100
@@ -87,7 +84,6 @@ jobs:
 
           scene.render.image_settings.file_format = 'PNG'
           scene.render.image_settings.color_mode = 'RGB'
-
           scene.render.film_transparent = False
 
           world = bpy.data.worlds.new("PuzzleWorld")
@@ -195,7 +191,7 @@ jobs:
           cube((-4.6,4,7),(0.12,0.15,11),cyan,0.04)
           cube((4.6,4,7),(0.12,0.15,11),cyan,0.04)
 
-          # Decorative upper arch rings
+          # Decorative rings
           ring1 = torus((0,4,9),4.3,0.08,cyan)
           ring2 = torus((0,4,9),3.7,0.06,gold)
 
@@ -309,7 +305,6 @@ jobs:
               im=Image.new("RGBA",(W,H),(0,0,0,0))
               d=ImageDraw.Draw(im)
 
-              # Main glass panel
               d.rounded_rectangle(
                   (65,380,1015,1510),
                   radius=70,
@@ -325,7 +320,6 @@ jobs:
                   width=5
               )
 
-              # Accent corners
               for x in (120,960):
                   for y in (440,1450):
                       d.ellipse((x-12,y-12,x+12,y+12),fill=(255,210,70,255))
