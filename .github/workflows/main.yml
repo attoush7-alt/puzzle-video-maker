@@ -36,9 +36,7 @@ jobs:
       - name: Install Tools
         run: |
           set -e
-
           sudo apt-get update
-
           sudo apt-get install -y \
             ffmpeg \
             blender \
@@ -51,32 +49,19 @@ jobs:
             libgbm1 \
             xvfb \
             xauth
-
           pip install pillow
-
-          echo "Checking graphics libraries..."
-          ldconfig -p | grep -E 'libEGL.so.1|libGL.so.1'
-
-          blender --version
-          ffmpeg -version
 
       - name: Validate Files
         run: |
           set -e
-
           test -s "${{ inputs.question_audio }}"
           test -s "${{ inputs.answer_audio }}"
-
-          echo "Question audio found"
-          echo "Answer audio found"
-
           ffprobe -v error "${{ inputs.question_audio }}"
           ffprobe -v error "${{ inputs.answer_audio }}"
 
       - name: Generate Animated 3D Environment
         run: |
           set -e
-
           mkdir -p /tmp/3d_frames
 
           cat > scene.py <<'PY'
@@ -88,222 +73,199 @@ jobs:
 
           scene = bpy.context.scene
           scene.render.engine = 'BLENDER_EEVEE'
-          scene.render.resolution_x = 1080
-          scene.render.resolution_y = 1920
+          scene.eevee.use_gtao = True
+          scene.eevee.gtao_distance = 3
+          scene.eevee.gtao_factor = 1.25
+
+          # Render settings
+          scene.render.resolution_x = 720
+          scene.render.resolution_y = 1280
           scene.render.resolution_percentage = 100
           scene.render.fps = 30
           scene.frame_start = 1
           scene.frame_end = 180
 
           scene.render.image_settings.file_format = 'PNG'
+          scene.render.image_settings.color_mode = 'RGB'
+
           scene.render.film_transparent = False
 
           world = bpy.data.worlds.new("PuzzleWorld")
           scene.world = world
           world.use_nodes = True
-          world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.008, 0.015, 0.045, 1)
+          world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.005, 0.008, 0.025, 1)
           world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.5
 
-          def material(name, color, metallic=0, roughness=0.3, emission=0):
+          def mat(name, color, metallic=0, rough=0.3, emission=0):
               m = bpy.data.materials.new(name)
               m.diffuse_color = (*color, 1)
               m.use_nodes = True
-
               bs = m.node_tree.nodes.get("Principled BSDF")
               bs.inputs["Base Color"].default_value = (*color, 1)
               bs.inputs["Metallic"].default_value = metallic
-              bs.inputs["Roughness"].default_value = roughness
+              bs.inputs["Roughness"].default_value = rough
               bs.inputs["Emission Color"].default_value = (*color, 1)
               bs.inputs["Emission Strength"].default_value = emission
-
               return m
 
-          blue = material("Neon Blue", (0.015, 0.12, 0.45), 0.8, 0.25, 0.5)
-          cyan = material("Cyan", (0.02, 0.5, 0.8), 0.6, 0.2, 2)
-          gold = material("Gold", (0.8, 0.4, 0.03), 0.8, 0.2, 1)
-          dark = material("Dark Metal", (0.025, 0.035, 0.08), 0.7, 0.3)
-          purple = material("Purple", (0.15, 0.03, 0.35), 0.5, 0.3, 0.5)
+          blue = mat("Electric Blue", (0.015, 0.06, 0.3), 0.8, 0.2, 0.3)
+          cyan = mat("Cyan Neon", (0.02, 0.5, 0.9), 0.4, 0.2, 2)
+          gold = mat("Royal Gold", (0.8, 0.45, 0.08), 0.8, 0.2, 0.5)
+          black = mat("Midnight Metal", (0.015, 0.02, 0.04), 0.7, 0.25)
+          violet = mat("Violet", (0.12, 0.025, 0.3), 0.5, 0.2, 1)
 
-          def cube(loc, scale, mat, bevel=0.15):
+          def cube(loc, scale, material, bevel=0.12):
               bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
-
               o = bpy.context.object
               o.dimensions = scale
-
-              bpy.ops.object.transform_apply(
-                  location=False,
-                  rotation=False,
-                  scale=True
-              )
-
-              o.data.materials.append(mat)
-
+              bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+              o.data.materials.append(material)
               if bevel:
-                  mod = o.modifiers.new("Rounded edges", "BEVEL")
-                  mod.width = bevel
-                  mod.segments = 4
-                  o.modifiers.new("Normals", "WEIGHTED_NORMAL")
-
+                  b = o.modifiers.new("Edge bevel", "BEVEL")
+                  b.width = bevel
+                  b.segments = 3
+                  o.modifiers.new("Weighted normals", "WEIGHTED_NORMAL")
               return o
 
-          def sphere(loc, scale, mat):
-              bpy.ops.mesh.primitive_uv_sphere_add(
-                  segments=32,
-                  ring_count=16,
+          def cylinder(loc, radius, depth, material):
+              bpy.ops.mesh.primitive_cylinder_add(
+                  vertices=64,
+                  radius=radius,
+                  depth=depth,
                   location=loc
               )
-
               o = bpy.context.object
-              o.scale = scale
-              o.data.materials.append(mat)
-
-              bpy.ops.object.shade_smooth()
-
+              o.data.materials.append(material)
+              b = o.modifiers.new("Bevel", "BEVEL")
+              b.width = 0.08
+              b.segments = 3
+              o.modifiers.new("Weighted normals", "WEIGHTED_NORMAL")
               return o
 
-          def torus(loc, major, minor, mat, rotation=(0, 0, 0)):
+          def torus(loc, major, minor, material, rotation=(0,0,0)):
               bpy.ops.mesh.primitive_torus_add(
                   major_radius=major,
                   minor_radius=minor,
                   location=loc,
-                  rotation=rotation
+                  rotation=rotation,
+                  major_segments=48,
+                  minor_segments=12
               )
-
               o = bpy.context.object
-              o.data.materials.append(mat)
-
+              o.data.materials.append(material)
               bpy.ops.object.shade_smooth()
-
               return o
 
-          # Floor
-          cube((0, 0, -0.25), (30, 30, 0.5), dark, 0.1)
-
-          # Neon floor grid
-          for x in range(-12, 13, 2):
-              cube((x, 0, 0.015), (0.025, 24, 0.02), blue, 0.01)
-
-          for y in range(-12, 13, 2):
-              cube((0, y, 0.02), (24, 0.025, 0.02), blue, 0.01)
-
-          # Platforms
-          cube((0, 5, 1), (10, 6, 0.4), blue, 0.2)
-          cube((0, 5, 1.25), (8, 4, 0.15), gold, 0.1)
-
-          # Animated cubes
-          positions = [
-              (-4, 3, 4), (4, 3, 6),
-              (-3, 6, 8), (3, 7, 3),
-              (-5, 1, 9), (5, 2, 10),
-              (-2, 8, 5), (2, 9, 8)
-          ]
-
-          for i, p in enumerate(positions):
-              o = cube(
-                  p,
-                  (1.5, 1.5, 1.5),
-                  gold if i % 3 == 0 else blue,
-                  0.22
+          def sphere(loc, radius, material):
+              bpy.ops.mesh.primitive_uv_sphere_add(
+                  segments=24,
+                  ring_count=12,
+                  radius=radius,
+                  location=loc
               )
+              o = bpy.context.object
+              o.data.materials.append(material)
+              bpy.ops.object.shade_smooth()
+              return o
 
-              o.rotation_euler = (0.3*i, 0.2*i, 0.4*i)
+          # Main floor
+          cube((0,0,-0.5),(30,30,1),black,0.2)
 
-              start_rot = o.rotation_euler[2]
+          # Floor light strips
+          for x in range(-12,13,3):
+              cube((x,0,0.02),(0.025,24,0.03),blue,0.01)
 
-              o.rotation_euler[2] = start_rot
-              o.keyframe_insert(data_path="rotation_euler", frame=1)
+          for y in range(-12,13,3):
+              cube((0,y,0.02),(24,0.025,0.03),blue,0.01)
 
-              o.rotation_euler[2] = start_rot + math.pi * 2
-              o.keyframe_insert(data_path="rotation_euler", frame=180)
+          # Main stage
+          cylinder((0,4,0.3),5.5,0.6,black)
+          cylinder((0,4,0.65),5.1,0.25,gold)
+          cylinder((0,4,0.85),4.8,0.2,blue)
+          cylinder((0,4,1.0),4.5,0.15,black)
 
+          torus((0,4,1.12),4.5,0.08,cyan)
+          torus((0,4,0.5),5.2,0.12,gold)
+
+          # Vertical architectural frame
+          cube((-5,4,7),(0.5,0.5,12),gold,0.12)
+          cube((5,4,7),(0.5,0.5,12),gold,0.12)
+          cube((0,4,13),(10.5,0.5,0.5),gold,0.12)
+
+          cube((-4.6,4,7),(0.12,0.15,11),cyan,0.04)
+          cube((4.6,4,7),(0.12,0.15,11),cyan,0.04)
+
+          # Decorative upper arch rings
+          ring1 = torus((0,4,9),4.3,0.08,cyan)
+          ring2 = torus((0,4,9),3.7,0.06,gold)
+
+          # Floating decorative objects
+          objects = []
+
+          for i in range(8):
+              angle = i * math.pi / 4
+              x = math.cos(angle) * 7
+              y = 3 + math.sin(angle) * 4
+              z = 3 + (i % 3) * 2
+
+              if i % 3 == 0:
+                  o = sphere((x,y,z),0.6,cyan)
+              elif i % 3 == 1:
+                  o = cube((x,y,z),(1,1,1),gold,0.15)
+              else:
+                  o = torus((x,y,z),0.7,0.12,violet)
+
+              objects.append(o)
+
+          # Animation
+          for o in objects:
               start = o.location.z
-
+              o.keyframe_insert(data_path="location",frame=1)
+              o.location.z = start + 0.6
+              o.keyframe_insert(data_path="location",frame=90)
               o.location.z = start
-              o.keyframe_insert(data_path="location", frame=1)
+              o.keyframe_insert(data_path="location",frame=180)
 
-              o.location.z = start + 0.8
-              o.keyframe_insert(data_path="location", frame=90)
+              o.rotation_euler[2] = 0
+              o.keyframe_insert(data_path="rotation_euler",frame=1)
+              o.rotation_euler[2] = math.pi
+              o.keyframe_insert(data_path="rotation_euler",frame=180)
 
-              o.location.z = start
-              o.keyframe_insert(data_path="location", frame=180)
+          for r in (ring1,ring2):
+              r.rotation_euler[2] = 0
+              r.keyframe_insert(data_path="rotation_euler",frame=1)
+              r.rotation_euler[2] = math.pi*2
+              r.keyframe_insert(data_path="rotation_euler",frame=180)
 
-          # Animated rings
-          ring1 = torus((0, 5, 7), 3.2, 0.12, cyan, (math.pi/2, 0, 0))
-          ring2 = torus((0, 5, 7), 2.7, 0.08, gold, (math.pi/2, 0.3, 0))
-          ring3 = torus((0, 8, 3), 2.4, 0.1, purple, (0.5, 0.2, 0))
+          # Lights
+          def light(name,loc,power,color,size):
+              bpy.ops.object.light_add(type='AREA',location=loc)
+              l=bpy.context.object
+              l.name=name
+              l.data.energy=power
+              l.data.color=color
+              l.data.shape='DISK'
+              l.data.size=size
+              l.rotation_euler=(Vector((0,4,5))-l.location).to_track_quat('-Z','Y').to_euler()
 
-          for ring in (ring1, ring2, ring3):
-              start_rot = ring.rotation_euler[2]
-
-              ring.rotation_euler[2] = start_rot
-              ring.keyframe_insert(data_path="rotation_euler", frame=1)
-
-              ring.rotation_euler[2] = start_rot + math.pi * 2
-              ring.keyframe_insert(data_path="rotation_euler", frame=180)
-
-          # Floating spheres
-          s1 = sphere((-4, 4, 7), (0.8, 0.8, 0.8), cyan)
-          s2 = sphere((4, 5, 4), (0.65, 0.65, 0.65), gold)
-          s3 = sphere((0, 9, 9), (1, 1, 1), purple)
-
-          for s in (s1, s2, s3):
-              start = s.location.z
-
-              s.location.z = start
-              s.keyframe_insert(data_path="location", frame=1)
-
-              s.location.z = start + 1.2
-              s.keyframe_insert(data_path="location", frame=90)
-
-              s.location.z = start
-              s.keyframe_insert(data_path="location", frame=180)
-
-          # Lighting
-          def area_light(name, loc, power, color, size):
-              bpy.ops.object.light_add(type='AREA', location=loc)
-
-              l = bpy.context.object
-              l.name = name
-              l.data.energy = power
-              l.data.color = color
-              l.data.shape = 'DISK'
-              l.data.size = size
-
-              l.rotation_euler = (
-                  Vector((0, 5, 4)) - l.location
-              ).to_track_quat('-Z', 'Y').to_euler()
-
-          area_light("Blue Key", (-8, -6, 12), 1800, (0.1, 0.3, 1), 8)
-          area_light("Gold Rim", (8, 5, 12), 2200, (1, 0.55, 0.1), 7)
-          area_light("Cyan Fill", (0, 10, 10), 1500, (0.1, 0.8, 1), 6)
+          light("Blue Key",(-8,-5,12),1600,(0.1,0.3,1),8)
+          light("Gold Rim",(8,5,12),1800,(1,0.55,0.1),7)
+          light("Cyan Fill",(0,10,10),1200,(0.1,0.8,1),6)
 
           # Camera
-          bpy.ops.object.camera_add(location=(0, -17, 9))
+          bpy.ops.object.camera_add(location=(0,-19,9))
+          cam=bpy.context.object
+          cam.rotation_euler=(Vector((0,4,6))-cam.location).to_track_quat('-Z','Y').to_euler()
+          cam.data.lens=35
+          scene.camera=cam
 
-          cam = bpy.context.object
+          cam.location.x=-0.5
+          cam.keyframe_insert(data_path="location",frame=1)
+          cam.location.x=0.5
+          cam.keyframe_insert(data_path="location",frame=180)
 
-          cam.rotation_euler = (
-              Vector((0, 5, 5)) - cam.location
-          ).to_track_quat('-Z', 'Y').to_euler()
-
-          cam.data.lens = 35
-          scene.camera = cam
-
-          # Camera movement
-          cam.location.x = -1.5
-          cam.keyframe_insert(data_path="location", frame=1)
-
-          cam.location.x = 0
-          cam.keyframe_insert(data_path="location", frame=90)
-
-          cam.location.x = 1.5
-          cam.keyframe_insert(data_path="location", frame=180)
-
-          scene.view_settings.view_transform = 'AgX'
-
-          scene.render.filepath = '/tmp/3d_frames/frame_'
-          scene.render.image_settings.file_format = 'PNG'
-          scene.render.image_settings.color_mode = 'RGB'
+          scene.view_settings.view_transform='AgX'
+          scene.render.filepath='/tmp/3d_frames/frame_'
 
           bpy.ops.render.render(animation=True)
           PY
@@ -318,6 +280,7 @@ jobs:
           ffmpeg -nostdin -y \
             -framerate 30 \
             -i /tmp/3d_frames/frame_%04d.png \
+            -vf "scale=1080:1920" \
             -c:v libx264 \
             -preset ultrafast \
             -crf 22 \
@@ -334,73 +297,73 @@ jobs:
           from PIL import Image, ImageDraw, ImageFont
           import os
 
-          W, H = 1080, 1920
-          os.makedirs("graphics", exist_ok=True)
+          W,H=1080,1920
+          os.makedirs("graphics",exist_ok=True)
 
-          font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+          font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
           def font(size):
-              return ImageFont.truetype(font_path, size)
+              return ImageFont.truetype(font_path,size)
 
-          def make(name, text, size=72, color=(255, 255, 255)):
-              im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-              d = ImageDraw.Draw(im)
+          def make(name,text,size=72,color=(255,255,255)):
+              im=Image.new("RGBA",(W,H),(0,0,0,0))
+              d=ImageDraw.Draw(im)
 
+              # Main glass panel
               d.rounded_rectangle(
-                  (70, 400, 1010, 1500),
-                  radius=65,
-                  fill=(8, 15, 40, 225),
-                  outline=(0, 180, 255, 255),
-                  width=8
+                  (65,380,1015,1510),
+                  radius=70,
+                  fill=(5,12,35,225),
+                  outline=(0,190,255,255),
+                  width=10
               )
 
               d.rounded_rectangle(
-                  (100, 430, 980, 1470),
-                  radius=50,
-                  outline=(255, 180, 40, 180),
-                  width=3
+                  (90,405,990,1485),
+                  radius=55,
+                  outline=(255,190,45,230),
+                  width=5
               )
 
-              lines = text.split("\n")
-              spacing = 25
-              heights = []
+              # Accent corners
+              for x in (120,960):
+                  for y in (440,1450):
+                      d.ellipse((x-12,y-12,x+12,y+12),fill=(255,210,70,255))
+
+              lines=text.split("\n")
+              spacing=35
+              heights=[]
 
               for line in lines:
-                  box = d.textbbox(
-                      (0, 0),
-                      line,
-                      font=font(size),
-                      direction="rtl"
-                  )
-                  heights.append(box[3] - box[1])
+                  box=d.textbbox((0,0),line,font=font(size),direction="rtl")
+                  heights.append(box[3]-box[1])
 
-              total = sum(heights) + spacing * (len(lines) - 1)
-              y = (H - total) // 2
+              total=sum(heights)+spacing*(len(lines)-1)
+              y=(H-total)//2
 
-              for line, h in zip(lines, heights):
+              for line,h in zip(lines,heights):
                   d.text(
-                      (W // 2, y),
+                      (W//2,y),
                       line,
                       font=font(size),
                       fill=color,
                       anchor="mt",
                       direction="rtl",
                       language="ar",
-                      stroke_width=2,
-                      stroke_fill=(0, 0, 0, 180)
+                      stroke_width=3,
+                      stroke_fill=(0,0,0,200)
                   )
+                  y+=h+spacing
 
-                  y += h + spacing
+              im.save("graphics/"+name+".png")
 
-              im.save("graphics/" + name + ".png")
+          make("intro","اختبر ذكاءك",100,(255,210,60))
+          make("question",os.environ["QUESTION"],70)
+          make("answer",os.environ["ANSWER"],75,(255,210,60))
+          make("outro","هل استطعت الحل؟\nتابعنا للمزيد",65,(0,220,255))
 
-          make("intro", "اختبر ذكاءك", 100, (255, 200, 50))
-          make("question", os.environ["QUESTION"], 70)
-          make("answer", os.environ["ANSWER"], 75, (255, 210, 60))
-          make("outro", "هل استطعت الحل؟\nتابعنا للمزيد", 65, (0, 220, 255))
-
-          for n in range(7, 0, -1):
-              make("timer" + str(n), str(n), 220, (255, 210, 40))
+          for n in range(7,0,-1):
+              make("timer"+str(n),str(n),220,(255,210,40))
           PY
 
           QUESTION="${{ inputs.question }}" \
@@ -443,7 +406,7 @@ jobs:
               "${AUDIO_INPUT[@]}" \
               -t "$DURATION" \
               -filter_complex \
-              "[0:v]format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
+              "[0:v]scale=1080:1920,format=rgba[bg];[1:v]format=rgba[fg];[bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
               -map "[v]" \
               -map 2:a \
               -c:v libx264 \
@@ -505,10 +468,7 @@ jobs:
       - name: Verify Final Video
         run: |
           set -e
-
           test -s final_video.mp4
-
-          echo "Checking final video..."
 
           ffprobe -v error \
             -show_entries format=duration \
