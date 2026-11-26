@@ -64,9 +64,7 @@ jobs:
 
           scene=bpy.context.scene
 
-          # Blender 5.0.1 compatible engine
           scene.render.engine="BLENDER_EEVEE"
-
           scene.render.resolution_x=360
           scene.render.resolution_y=640
           scene.render.resolution_percentage=100
@@ -82,9 +80,10 @@ jobs:
               m.diffuse_color=(*color,1)
               m.use_nodes=True
               bs=m.node_tree.nodes.get("Principled BSDF")
-              bs.inputs["Base Color"].default_value=(*color,1)
-              bs.inputs["Metallic"].default_value=metal
-              bs.inputs["Roughness"].default_value=rough
+              if bs:
+                  bs.inputs["Base Color"].default_value=(*color,1)
+                  bs.inputs["Metallic"].default_value=metal
+                  bs.inputs["Roughness"].default_value=rough
               return m
 
           navy=mat("Midnight",(.018,.035,.12),.25)
@@ -119,7 +118,7 @@ jobs:
               o.data.materials.append(material)
               return o
 
-          # Stage
+          # Stage floor
           cube("Stage floor",(0,0,-1.1),(12,12,.3),navy)
 
           bpy.ops.mesh.primitive_cylinder_add(
@@ -180,7 +179,7 @@ jobs:
           q=sphere("Question mark sphere",(0,0,3.3),.38,gold)
           q.scale=(.75,.75,.75)
 
-          # Lights
+          # Lighting
           def area(name,loc,power,color,size):
               bpy.ops.object.light_add(type="AREA",location=loc)
               l=bpy.context.object
@@ -206,7 +205,7 @@ jobs:
           cam.data.lens=42
           scene.camera=cam
 
-          # Animation loop
+          # Animate 24 frames
           for frame in range(1,25):
               phase=2*math.pi*(frame-1)/24
 
@@ -231,13 +230,7 @@ jobs:
               q.location.z=3.3+.15*math.sin(phase)
               q.keyframe_insert(data_path="location",frame=frame)
 
-          for obj in scene.objects:
-              if obj.animation_data and obj.animation_data.action:
-                  for fc in obj.animation_data.action.fcurves:
-                      for kp in fc.keyframe_points:
-                          kp.interpolation="LINEAR"
-                      fc.modifiers.new("CYCLES")
-
+          # No fcurves or action modifiers needed.
           bpy.ops.wm.save_as_mainfile(filepath="/tmp/stage.blend")
           PY
 
