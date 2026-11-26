@@ -16,547 +16,375 @@ on:
         required: true
         default: "الإجابة الصحيحة"
       question_audio:
-        description: Question audio file
+        description: Question audio filename in repository
         required: true
         default: "question.wav"
       answer_audio:
-        description: Answer audio file
+        description: Answer audio filename in repository
         required: true
         default: "answer.wav"
 
+permissions:
+  contents: read
+
 jobs:
-  create-video:
+  render:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Tools
+      - name: Install tools
         run: |
-          set -e
           sudo apt-get update
-          sudo apt-get install -y \
-            ffmpeg blender \
-            fonts-dejavu-core fonts-noto-core fonts-noto-extra \
-            libegl1 libgl1 libgl1-mesa-dri libgles2 libgbm1 \
-            xvfb xauth
-          python3 -m pip install --upgrade pillow
+          sudo apt-get install -y ffmpeg blender fonts-noto-core fonts-noto-extra fonts-dejavu-core xvfb libegl1 libgl1 libgl1-mesa-dri libgbm1
+          python -m pip install --upgrade pip pillow
 
-      - name: Validate Audio
+      - name: Validate audio
         env:
-          Q: ${{ inputs.question_audio }}
-          A: ${{ inputs.answer_audio }}
+          QA: ${{ inputs.question_audio }}
+          AA: ${{ inputs.answer_audio }}
         run: |
           set -e
-          test -s "$Q"
-          test -s "$A"
-          ffprobe -v error -show_entries format=duration "$Q"
-          ffprobe -v error -show_entries format=duration "$A"
+          test -f "$QA" || { echo "Question audio not found: $QA"; exit 1; }
+          test -f "$AA" || { echo "Answer audio not found: $AA"; exit 1; }
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$QA"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$AA"
 
-      - name: Build Cinematic 3D Scene
-        shell: bash
+      - name: Render looping 3D stage
         run: |
-          set -e
-          mkdir -p /tmp/frames
-
           cat > scene.py <<'PY'
           import bpy, math
           from mathutils import Vector
 
-          # Clean scene
-          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.select_all(action="SELECT")
           bpy.ops.object.delete(use_global=False)
 
-          s=bpy.context.scene
-          s.render.engine='BLENDER_EEVEE_NEXT'
-          s.render.resolution_x=540
-          s.render.resolution_y=960
-          s.render.resolution_percentage=100
-          s.fps=24
-          s.frame_start=1
-          s.frame_end=72
-          s.render.image_settings.file_format='PNG'
-          s.render.image_settings.color_mode='RGB'
-          s.render.image_settings.color_depth='8'
-          s.render.film_transparent=False
-          s.view_settings.view_transform='AgX'
+          scene=bpy.context.scene
+          scene.render.engine="BLENDER_EEVEE_NEXT"
+          scene.render.resolution_x=360
+          scene.render.resolution_y=640
+          scene.render.resolution_percentage=100
+          scene.render.fps=24
+          scene.frame_start=1
+          scene.frame_end=24
+          scene.render.image_settings.file_format="PNG"
+          scene.render.filepath="/tmp/stage/frame_"
+          scene.world.color=(0.025,0.025,0.04)
 
-          # World
-          world=bpy.data.worlds.new('Puzzle World')
-          s.world=world
-          world.use_nodes=True
-          world.node_tree.nodes['Background'].inputs['Color'].default_value=(.006,.012,.045,1)
-          world.node_tree.nodes['Background'].inputs['Strength'].default_value=.35
-
-          # Materials
-          def mat(name,color,metal=0,rough=.3,emission=0):
+          def mat(name,color,metal=0,rough=.4):
               m=bpy.data.materials.new(name)
               m.diffuse_color=(*color,1)
               m.use_nodes=True
-              p=m.node_tree.nodes.get('Principled BSDF')
-              p.inputs['Base Color'].default_value=(*color,1)
-              p.inputs['Metallic'].default_value=metal
-              p.inputs['Roughness'].default_value=rough
-              p.inputs['Emission Color'].default_value=(*color,1)
-              p.inputs['Emission Strength'].default_value=emission
+              bs=m.node_tree.nodes.get("Principled BSDF")
+              bs.inputs["Base Color"].default_value=(*color,1)
+              bs.inputs["Metallic"].default_value=metal
+              bs.inputs["Roughness"].default_value=rough
               return m
 
-          navy=mat('Deep Blue',(.006,.02,.09),.5,.25)
-          blue=mat('Electric Blue',(.025,.15,.8),.5,.22,.5)
-          cyan=mat('Cyan',(.02,.5,1),.2,.2,2)
-          gold=mat('Gold',(.8,.42,.06),.7,.25,.3)
-          bright=mat('Bright Gold',(1,.7,.15),.2,.2,1)
-          red=mat('Host Jacket',(.65,.025,.09),.1,.3)
-          skin=mat('Skin',(.8,.42,.24))
-          hair=mat('Hair',(.12,.045,.02))
-          white=mat('White',(.95,.98,1))
-          black=mat('Black',(.005,.008,.015))
-          teal=mat('Shoes',(.02,.3,.6),.2,.25)
+          navy=mat("Midnight",(.018,.035,.12),.25)
+          blue=mat("Electric blue",(.02,.25,.8),.55)
+          gold=mat("Gold",(.95,.52,.06),.65,.25)
+          white=mat("Pearl",(.85,.9,1),.15)
+          pink=mat("Accent",(.7,.04,.35),.25)
 
-          # Helpers
-          def cube(name,loc,scale,material,bevel=.08):
+          def cube(name,loc,scale,material):
               bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
               o=bpy.context.object
               o.name=name
               o.dimensions=scale
               bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
               o.data.materials.append(material)
-              if bevel:
-                  b=o.modifiers.new('Rounded Edges','BEVEL')
-                  b.width=bevel
-                  b.segments=4
-                  o.modifiers.new('Weighted Normals','WEIGHTED_NORMAL')
               return o
 
-          def sphere(name,loc,scale,material):
+          def sphere(name,loc,r,material):
               bpy.ops.mesh.primitive_uv_sphere_add(
-                  segments=32,ring_count=20,location=loc)
+                  segments=16,ring_count=8,radius=r,location=loc)
               o=bpy.context.object
               o.name=name
-              o.scale=scale
               o.data.materials.append(material)
-              bpy.ops.object.shade_smooth()
               return o
 
-          def torus(loc,r,minor,material,rot=(0,0,0)):
+          def torus(name,loc,major,minor,material):
               bpy.ops.mesh.primitive_torus_add(
-                  major_radius=r,minor_radius=minor,
-                  location=loc,rotation=rot)
+                  major_radius=major,minor_radius=minor,location=loc)
               o=bpy.context.object
+              o.name=name
               o.data.materials.append(material)
-              bpy.ops.object.shade_smooth()
               return o
 
-          def cylinder(loc,r,depth,material):
-              bpy.ops.mesh.primitive_cylinder_add(
-                  vertices=64,radius=r,depth=depth,location=loc)
-              o=bpy.context.object
-              o.data.materials.append(material)
-              b=o.modifiers.new('Soft Edge','BEVEL')
-              b.width=.06
-              b.segments=3
-              o.modifiers.new('Weighted Normals','WEIGHTED_NORMAL')
-              return o
+          # Stage
+          cube("Stage floor",(0,0,-1.1),(12,12,.3),navy)
 
-          # Floor
-          cube('Floor',(0,0,-.5),(30,30,1),navy,.3)
+          bpy.ops.mesh.primitive_cylinder_add(
+              vertices=48,radius=2.7,depth=.32,location=(0,0,-.7))
+          platform=bpy.context.object
+          platform.name="Hero platform"
+          platform.data.materials.append(blue)
 
-          # Floor grid
-          for x in range(-12,13,2):
-              cube('Grid',(x,0,.015),(.025,25,.02),blue,.01)
-          for y in range(-12,13,2):
-              cube('Grid',(0,y,.015),(25,.025,.02),blue,.01)
+          torus("Platform gold rim",(0,0,-.48),2.65,.08,gold)
+          torus("Platform neon ring",(0,0,-.4),2.35,.035,white)
 
-          # Platform
-          cylinder((0,3,.25),4.5,.5,navy)
-          cylinder((0,3,.48),4.2,.16,gold)
-          cylinder((0,3,.68),3.95,.2,blue)
-          torus((0,3,.82),3.9,.1,cyan)
-
-          # Dramatic pillars
-          for x in [-4.2,4.2]:
-              cube('Pillar',(x,3,5.2),(.32,.4,8.7),gold,.15)
-              cube('Neon',(x,2.75,5.2),(.1,.12,8.4),cyan,.05)
-          cube('Top',(0,3,9.6),(8.6,.4,.35),gold,.15)
-
-          # Rings in background
-          r1=torus((0,3,7.4),3,.09,cyan,(math.pi/2,0,0))
-          r2=torus((0,3,7.4),2.6,.07,gold,(math.pi/2,.3,0))
-          r3=torus((0,3,7.4),2.1,.06,blue,(math.pi/2,.6,0))
-
-          for r in [r1,r2,r3]:
-              r.keyframe_insert(data_path='rotation_euler',frame=1)
-              r.rotation_euler[1]+=math.pi
-              r.rotation_euler[2]+=math.pi*2
-              r.keyframe_insert(data_path='rotation_euler',frame=72)
-
-          # 3D question mark
-          bpy.ops.object.text_add(location=(0,2.2,6.8))
-          q=bpy.context.object
-          q.name='Golden Question Mark'
-          q.data.body='?'
-          q.data.align_x='CENTER'
-          q.data.align_y='CENTER'
-          q.data.size=3.4
-          q.data.extrude=.18
-          q.data.bevel_depth=.04
-          q.data.materials.append(bright)
-          q.rotation_euler[0]=math.radians(90)
-
-          q.keyframe_insert(data_path='location',frame=1)
-          q.location.z+=.5
-          q.keyframe_insert(data_path='location',frame=36)
-          q.location.z-=.5
-          q.keyframe_insert(data_path='location',frame=72)
+          # Suspended rings
+          for i in range(3):
+              r=2.3+i*.35
+              t=torus("Orbit ring "+str(i),(0,0,1.4+i*.35),
+                       r,.035,blue if i%2==0 else gold)
+              t.rotation_euler[0]=math.radians(65+i*20)
 
           # Cartoon host
-          # Body
-          body=sphere('Host Body',(-1.65,1.1,3.05),(.65,.45,.85),red)
+          sphere("Host body",(0,-.1,.5),.62,blue)
+          sphere("Host head",(0,-.1,1.55),.78,white)
+          sphere("Left ear",(-.42,-.1,2.25),.22,white)
+          sphere("Right ear",(.42,-.1,2.25),.22,white)
+          sphere("Left eye",(-.25,-.78,1.7),.12,navy)
+          sphere("Right eye",(.25,-.78,1.7),.12,navy)
+          sphere("Smile",(0,-.78,1.38),.12,pink)
 
-          # Head
-          head=sphere('Host Head',(-1.65,1.1,4.3),(.78,.65,.82),skin)
-          sphere('Hair',(-1.65,1.15,4.85),(.75,.63,.43),hair)
+          for x in [-.55,.55]:
+              arm=sphere("Animated arm",(x,-.1,.65),.23,gold)
+              arm.scale=(.55,.3,.25)
+              arm.rotation_euler[1]=x*1.2
 
-          for x in [-2.1,-1.85,-1.55,-1.3]:
-              sphere('Hair Curl',(x,1.05,5.05),(.23,.2,.24),hair)
+          for x in [-.25,.25]:
+              cube("Host leg",(x,-.05,-.1),(.25,.35,.65),white)
 
-          # Eyes
-          for x in [-1.95,-1.35]:
-              sphere('Eye',(x,.53,4.45),(.14,.1,.22),white)
-              sphere('Pupil',(x,.45,4.45),(.065,.04,.12),black)
-
-          sphere('Nose',(-1.65,.48,4.22),(.12,.1,.1),skin)
-          sphere('Smile',(-1.65,.43,4.02),(.19,.05,.045),black)
-
-          # Arms
-          arm1=sphere('Left Arm',(-2.25,1.05,3.35),(.24,.26,.7),red)
-          arm2=sphere('Right Arm',(-1.05,1.05,3.35),(.24,.26,.7),red)
-          hand1=sphere('Hand',(-2.25,.9,2.75),(.24,.2,.24),skin)
-          hand2=sphere('Hand',(-1.05,.9,2.75),(.24,.2,.24),skin)
-
-          # Arm wave animation
-          arm2.rotation_euler[1]=0
-          arm2.keyframe_insert(data_path='rotation_euler',frame=1)
-          arm2.rotation_euler[1]=-.6
-          arm2.keyframe_insert(data_path='rotation_euler',frame=24)
-          arm2.rotation_euler[1]=.45
-          arm2.keyframe_insert(data_path='rotation_euler',frame=48)
-          arm2.rotation_euler[1]=0
-          arm2.keyframe_insert(data_path='rotation_euler',frame=72)
-
-          # Legs
-          for x in [-1.95,-1.35]:
-              sphere('Leg',(x,1.2,2.25),(.23,.25,.62),teal)
-              sphere('Shoe',(x,1,.1+1.65),(.35,.42,.2),black)
-
-          # Floating props
+          # Floating puzzle objects
           props=[]
-          positions=[
-              (-4,3,4),(4,3,6),(-3,6,8),(3,7,3),
-              (-5,1,9),(5,2,10),(-2,8,5),(2,9,8)
-          ]
+          for i in range(8):
+              angle=i*math.pi/4
+              x=3.2*math.cos(angle)
+              y=2.5*math.sin(angle)
 
-          for i,p in enumerate(positions):
               if i%2:
-                  o=cube('Floating Cube',p,(.9,.9,.9),gold if i%3==0 else blue,.18)
+                  o=sphere("Floating orb "+str(i),
+                           (x,y,1.5+(i%3)*.4),.22,
+                           gold if i%3==0 else blue)
               else:
-                  o=sphere('Floating Sphere',p,(.55,.55,.55),cyan if i%3 else bright)
+                  o=cube("Floating cube "+str(i),
+                         (x,y,1.5+(i%3)*.4),
+                         (.42,.42,.42),pink if i%3==0 else white)
+
               props.append(o)
 
-          for o in props:
-              start=o.location.z
-              o.keyframe_insert(data_path='location',frame=1)
-              o.location.z=start+.65
-              o.keyframe_insert(data_path='location',frame=36)
-              o.location.z=start
-              o.keyframe_insert(data_path='location',frame=72)
-              o.keyframe_insert(data_path='rotation_euler',frame=1)
-              o.rotation_euler[2]+=math.pi*2
-              o.keyframe_insert(data_path='rotation_euler',frame=72)
+          q=sphere("Question mark sphere",(0,0,3.3),.38,gold)
+          q.scale=(.75,.75,.75)
 
-          # Light
-          def area(name,loc,power,color,size,target=(0,3,4)):
-              bpy.ops.object.light_add(type='AREA',location=loc)
+          # Lights
+          def area(name,loc,power,color,size):
+              bpy.ops.object.light_add(type="AREA",location=loc)
               l=bpy.context.object
               l.name=name
               l.data.energy=power
               l.data.color=color
-              l.data.shape='DISK'
+              l.data.shape="DISK"
               l.data.size=size
-              l.rotation_euler=(Vector(target)-l.location).to_track_quat('-Z','Y').to_euler()
+              l.rotation_euler=(
+                  Vector((0,0,0))-l.location
+              ).to_track_quat("-Z","Y").to_euler()
 
-          area('Blue Key',(-7,-5,10),1600,(.12,.3,1),7)
-          area('Golden Rim',(7,4,10),1900,(1,.55,.12),6)
-          area('Front Fill',(0,-8,6),1100,(.4,.65,1),5)
-          area('Top',(0,3,12),1400,(.2,.5,1),5)
+          area("Key light",(3,-5,6),900,(.35,.55,1),5)
+          area("Gold rim",(-4,3,4),1000,(1,.5,.15),4)
+          area("Fill",(0,4,5),650,(.2,.4,1),5)
 
           # Camera
-          bpy.ops.object.camera_add(location=(0,-16,7))
+          bpy.ops.object.camera_add(location=(6,-10,5))
           cam=bpy.context.object
-          cam.name='Cinematic Camera'
-          cam.rotation_euler=(Vector((0,3.2,4.7))-cam.location).to_track_quat('-Z','Y').to_euler()
-          cam.data.lens=40
-          s.camera=cam
+          cam.rotation_euler=(
+              Vector((0,0,1))-cam.location
+          ).to_track_quat("-Z","Y").to_euler()
+          cam.data.lens=42
+          scene.camera=cam
 
-          # Camera motion
-          cam.keyframe_insert(data_path='location',frame=1)
-          cam.location.x=.45
-          cam.location.z+=.25
-          cam.keyframe_insert(data_path='location',frame=36)
-          cam.location.x=-.3
-          cam.location.z-=.25
-          cam.keyframe_insert(data_path='location',frame=72)
+          # Animation loop
+          for frame in range(1,25):
+              phase=2*math.pi*(frame-1)/24
 
-          # Smooth animation curves
-          for obj in bpy.data.objects:
+              cam.location=(6+0.22*math.sin(phase),
+                            -10,5+0.12*math.cos(phase))
+              cam.rotation_euler=(
+                  Vector((0,0,1))-cam.location
+              ).to_track_quat("-Z","Y").to_euler()
+
+              cam.keyframe_insert(data_path="location",frame=frame)
+              cam.keyframe_insert(data_path="rotation_euler",frame=frame)
+
+              for i,o in enumerate(props):
+                  o.location.z=1.5+(i%3)*.4+.18*math.sin(phase+i)
+                  o.rotation_euler[2]=phase*(1 if i%2 else -1)
+                  o.keyframe_insert(data_path="location",frame=frame)
+                  o.keyframe_insert(data_path="rotation_euler",frame=frame)
+
+              q.location.z=3.3+.15*math.sin(phase)
+              q.keyframe_insert(data_path="location",frame=frame)
+
+          for obj in scene.objects:
               if obj.animation_data and obj.animation_data.action:
                   for fc in obj.animation_data.action.fcurves:
                       for kp in fc.keyframe_points:
-                          kp.interpolation='BEZIER'
+                          kp.interpolation="LINEAR"
+                      fc.modifiers.new("CYCLES")
 
-          s.render.filepath='/tmp/frames/f_'
-          bpy.ops.render.render(animation=True)
+          bpy.ops.wm.save_as_mainfile(filepath="/tmp/stage.blend")
           PY
 
-          LIBGL_ALWAYS_SOFTWARE=1 \
-          MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
-          EGL_PLATFORM=surfaceless \
-          xvfb-run -a blender -b -t 2 --python scene.py
+          mkdir -p /tmp/stage
 
-          ffmpeg -nostdin -y \
-            -framerate 24 -i /tmp/frames/f_%04d.png \
-            -vf scale=720:1280 \
-            -c:v libx264 -preset ultrafast -crf 24 \
-            -pix_fmt yuv420p /tmp/3d_bg.mp4
+          LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=llvmpipe EGL_PLATFORM=surfaceless xvfb-run -a blender -b -t 2 --python scene.py
 
-          test -s /tmp/3d_bg.mp4
+          LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=llvmpipe EGL_PLATFORM=surfaceless xvfb-run -a blender -b /tmp/stage.blend -t 2 -o /tmp/stage/frame_ -F PNG -a
 
-      - name: Create Arabic Graphics
+          ffmpeg -y -framerate 24 -i /tmp/stage/frame_%04d.png -c:v libx264 -pix_fmt yuv420p -t 1 /tmp/bg.mp4
+
+      - name: Create text cards and assemble video
         env:
           TITLE: ${{ inputs.title }}
           QUESTION: ${{ inputs.question }}
           ANSWER: ${{ inputs.answer }}
+          QA: ${{ inputs.question_audio }}
+          AA: ${{ inputs.answer_audio }}
         run: |
-          set -e
-
           cat > graphics.py <<'PY'
-          from PIL import Image, ImageDraw, ImageFont, ImageFilter
           import os
+          from PIL import Image, ImageDraw, ImageFont
 
           W,H=720,1280
-          os.makedirs('graphics',exist_ok=True)
+          os.makedirs("/tmp/cards",exist_ok=True)
 
-          paths=[
-              '/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf',
-              '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+          fontpaths=[
+            "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
           ]
-          fp=next((x for x in paths if os.path.exists(x)),paths[-1])
 
-          def F(size):
-              return ImageFont.truetype(fp,size)
+          def font(size):
+              for p in fontpaths:
+                  if os.path.exists(p):
+                      return ImageFont.truetype(p,size)
+              return ImageFont.load_default()
 
-          def draw_text(draw,text,pos,font,fill,anchor='mm'):
-              try:
-                  draw.text(pos,text,font=font,fill=fill,anchor=anchor,
-                            direction='rtl',language='ar',
-                            stroke_width=3,stroke_fill=(0,0,0,230))
-              except:
-                  draw.text(pos,text,font=font,fill=fill,anchor=anchor,
-                            stroke_width=3,stroke_fill=(0,0,0,230))
-
-          def wrap(text,font,max_width):
-              words=text.split()
-              lines=[]
-              line=''
-              for word in words:
-                  candidate=(line+' '+word).strip()
-                  if draw_width(candidate,font)>max_width and line:
-                      lines.append(line)
-                      line=word
-                  else:
-                      line=candidate
-              if line:
-                  lines.append(line)
-              return lines
-
-          def draw_width(text,font):
-              tmp=Image.new('RGB',(1,1))
-              d=ImageDraw.Draw(tmp)
-              try:
-                  return d.textbbox((0,0),text,font=font,direction='rtl')[2]
-              except:
-                  return d.textbbox((0,0),text,font=font)[2]
-
-          def make(name,title,text,size=56,color=(255,255,255),number=None):
-              im=Image.new('RGBA',(W,H),(0,0,0,0))
-              glow=Image.new('RGBA',(W,H),(0,0,0,0))
-              gd=ImageDraw.Draw(glow)
-              gd.rounded_rectangle(
-                  (35,260,685,1020),radius=55,
-                  outline=(0,190,255,180),width=18)
-              glow=glow.filter(ImageFilter.GaussianBlur(18))
-              im.alpha_composite(glow)
-
+          def card(filename,heading,body="",number=None):
+              im=Image.new("RGBA",(W,H),(0,0,0,0))
               d=ImageDraw.Draw(im)
+
               d.rounded_rectangle(
-                  (42,270,678,1010),radius=48,
-                  fill=(3,10,38,238),outline=(0,190,255,255),width=7)
+                  (42,250,678,1030),
+                  radius=45,
+                  fill=(8,15,48,225),
+                  outline=(245,180,45,255),
+                  width=5
+              )
+
               d.rounded_rectangle(
-                  (58,286,662,994),radius=38,
-                  outline=(255,190,45,230),width=3)
+                  (64,272,656,1008),
+                  radius=36,
+                  outline=(35,155,255,255),
+                  width=3
+              )
 
-              # Header
-              if title:
-                  draw_text(d,title,(W//2,365),F(48),(255,210,65))
+              d.text(
+                  (W//2,350),
+                  heading,
+                  font=font(54),
+                  fill=(255,208,85,255),
+                  anchor="mm",
+                  stroke_width=2,
+                  stroke_fill=(30,30,65,255)
+              )
 
-              # Text layout
-              font=F(size)
-              lines=[]
-              for original in text.split('\n'):
-                  lines.extend(wrap(original,font,520) or [''])
+              if body:
+                  d.multiline_text(
+                      (W//2,590),
+                      body,
+                      font=font(48),
+                      fill=(255,255,255,255),
+                      anchor="mm",
+                      align="center",
+                      spacing=20,
+                      stroke_width=1,
+                      stroke_fill=(0,0,0,255)
+                  )
 
-              # Reduce font for very long text
-              while len(lines)>6 and size>34:
-                  size-=3
-                  font=F(size)
-                  lines=[]
-                  for original in text.split('\n'):
-                      lines.extend(wrap(original,font,520) or [''])
-
-              heights=[]
-              for line in lines:
-                  try:
-                      b=d.textbbox((0,0),line,font=font,direction='rtl')
-                  except:
-                      b=d.textbbox((0,0),line,font=font)
-                  heights.append(max(1,b[3]-b[1]))
-
-              total=sum(heights)+20*(len(heights)-1)
-              y=570-total//2
-              for line,h in zip(lines,heights):
-                  draw_text(d,line,(W//2,y+h//2),font,color)
-                  y+=h+20
-
-              # Countdown badge below question
               if number is not None:
                   d.ellipse(
-                      (270,820,450,1000),
-                      fill=(255,180,30,255),
-                      outline=(255,255,255,255),width=7)
-                  d.ellipse(
-                      (285,835,435,985),
-                      outline=(0,40,100,255),width=5)
+                      (220,750,500,1030),
+                      fill=(255,175,30,255),
+                      outline=(255,255,255,255),
+                      width=6
+                  )
                   d.text(
-                      (W//2,910),str(number),
-                      font=F(125),fill=(8,15,40),anchor='mm')
+                      (360,890),
+                      str(number),
+                      font=font(170),
+                      fill=(8,15,48,255),
+                      anchor="mm"
+                  )
 
-              im.save('graphics/'+name+'.png')
+              im.save("/tmp/cards/"+filename+".png")
 
-          make('intro',os.environ['TITLE'],'استعد للتحدي!',60)
-          make('question','لغز اليوم',os.environ['QUESTION'],54)
-          make('answer','الإجابة الصحيحة',os.environ['ANSWER'],64,(255,220,60))
-          make('pause','هل وصلت للحل؟', 'لحظة الكشف!',58,(255,210,65))
-          make('outro','', 'هل استطعت الحل؟\nتابعنا للمزيد',52,(40,220,255))
+          card("intro","لغز جديد","استعد للتحدي!")
+          card("question","فكّر جيدًا",os.environ["QUESTION"])
+          card("answer","الحل هو",os.environ["ANSWER"])
+          card("pause","هل عرفت الإجابة؟","")
+          card("outro","أحسنت!","تابع التحديات القادمة")
 
-          for n in range(7,0,-1):
-              make('timer'+str(n),'فكر وحاول',
-                   os.environ['QUESTION'],46,(255,255,255),n)
+          for n in range(1,8):
+              card("timer"+str(n),"فكّر جيدًا",os.environ["QUESTION"],n)
           PY
 
-          python3 graphics.py
+          python graphics.py
 
-      - name: Render Cinematic Segments
-        env:
-          Q: ${{ inputs.question_audio }}
-          A: ${{ inputs.answer_audio }}
-        shell: bash
-        run: |
-          set -e
-          mkdir -p segments
+          mkdir -p /tmp/segments
 
-          qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$Q")
-          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$A")
+          qdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$QA")
+          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$AA")
 
-          render(){
-            IMAGE="$1"
-            D="$2"
-            AUDIO="$3"
-            OUT="$4"
+          make_segment() {
+            name="$1"
+            overlay="$2"
+            duration="$3"
+            audio="${4:-}"
 
-            if [ -n "$AUDIO" ]; then
-              AI=(-i "$AUDIO")
+            if [ -n "$audio" ]; then
+              ffmpeg -y -stream_loop -1 -i /tmp/bg.mp4 -loop 1 -i "$overlay" -i "$audio" \
+                -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[v0];[v0][1:v]overlay=0:0:format=auto,format=yuv420p[v]" \
+                -map "[v]" -map 2:a -t "$duration" -r 24 \
+                -c:v libx264 -preset ultrafast -crf 28 \
+                -c:a aac -b:a 128k -shortest \
+                "/tmp/segments/$name.mp4"
             else
-              AI=(-f lavfi -i "anullsrc=r=44100:cl=stereo")
+              ffmpeg -y -stream_loop -1 -i /tmp/bg.mp4 -loop 1 -i "$overlay" \
+                -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[v0];[v0][1:v]overlay=0:0:format=auto,format=yuv420p[v]" \
+                -map "[v]" -t "$duration" -r 24 \
+                -c:v libx264 -preset ultrafast -crf 28 -an \
+                "/tmp/segments/$name.mp4"
             fi
-
-            ffmpeg -nostdin -y \
-              -stream_loop -1 -i /tmp/3d_bg.mp4 \
-              -loop 1 -framerate 24 -i "$IMAGE" \
-              "${AI[@]}" \
-              -t "$D" \
-              -filter_complex \
-              "[0:v]scale=720:1280,format=rgba[bg]; \
-               [1:v]format=rgba[fg]; \
-               [bg][fg]overlay=0:0:format=auto,format=yuv420p[v]" \
-              -map '[v]' -map 2:a \
-              -c:v libx264 -preset ultrafast -crf 23 \
-              -c:a aac -b:a 160k -ar 44100 -ac 2 \
-              -pix_fmt yuv420p "$OUT"
           }
 
-          # Dramatic opening
-          render graphics/intro.png 3 "" segments/00.mp4
+          make_segment intro /tmp/cards/intro.png 3
+          make_segment question /tmp/cards/question.png "$qdur" "$QA"
 
-          # Question spoken with written text
-          render graphics/question.png "$qdur" "$Q" segments/01.mp4
-
-          # Countdown: question stays on screen
-          i=2
           for n in 7 6 5 4 3 2 1; do
-            render "graphics/timer${n}.png" 1 "" \
-              "segments/$(printf '%02d' "$i").mp4"
-            i=$((i+1))
+            make_segment "timer$n" "/tmp/cards/timer$n.png" 1
           done
 
-          # Short suspense pause before answer
-          render graphics/pause.png 1.2 "" segments/09.mp4
+          make_segment pause /tmp/cards/pause.png 1.2
+          make_segment answer /tmp/cards/answer.png "$adur" "$AA"
+          make_segment outro /tmp/cards/outro.png 3
 
-          # Answer spoken and written
-          render graphics/answer.png "$adur" "$A" segments/10.mp4
+          cd /tmp/segments
 
-          # Outro
-          render graphics/outro.png 3 "" segments/11.mp4
-
-      - name: Merge and Verify
-        run: |
-          set -e
-          rm -f concat.txt
-
-          for f in segments/*.mp4; do
-            echo "file '$f'" >> concat.txt
+          for f in intro question timer7 timer6 timer5 timer4 timer3 timer2 timer1 pause answer outro; do
+            echo "file '$f.mp4'" >> concat.txt
           done
 
-          ffmpeg -nostdin -y \
-            -f concat -safe 0 -i concat.txt \
-            -c copy final_video.mp4
+          ffmpeg -y -f concat -safe 0 -i concat.txt -c copy /tmp/puzzle-video.mp4
 
-          test -s final_video.mp4
-
-          ffprobe -v error \
-            -show_entries format=duration \
-            -show_entries stream=codec_name,width,height \
-            -of default=noprint_wrappers=1 \
-            final_video.mp4
-
-          ls -lh final_video.mp4
-
-      - name: Upload Video Artifact
+      - name: Upload video
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-video
-          path: final_video.mp4
-          if-no-files-found: error
+          path: /tmp/puzzle-video.mp4
           retention-days: 7
-          compression-level: 0
