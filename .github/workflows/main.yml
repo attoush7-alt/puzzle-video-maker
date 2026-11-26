@@ -16,11 +16,11 @@ on:
         required: true
         default: "الإجابة هي ..."
       question_audio:
-        description: Question audio file
+        description: Question audio
         required: true
         default: "question.wav"
       answer_audio:
-        description: Answer audio file
+        description: Answer audio
         required: true
         default: "answer.wav"
 
@@ -36,22 +36,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender ffmpeg fonts-dejavu-core fonts-noto-core python3-pil
+          sudo apt-get install -y blender ffmpeg fonts-dejavu-core python3-pil
 
       - name: Validate audio
         env:
           QA: ${{ inputs.question_audio }}
           AA: ${{ inputs.answer_audio }}
         run: |
-          test -f "$QA" || { echo "Question audio not found: $QA"; exit 1; }
-          test -f "$AA" || { echo "Answer audio not found: $AA"; exit 1; }
-          ffprobe -v error "$QA"
-          ffprobe -v error "$AA"
+          test -f "$QA"
+          test -f "$AA"
 
-      - name: Create 3D environment
+      - name: Render 3D background
         run: |
           cat > scene.py <<'PY'
           import bpy, math
@@ -60,243 +58,196 @@ jobs:
           bpy.ops.object.select_all(action='SELECT')
           bpy.ops.object.delete(use_global=False)
 
-          scene=bpy.context.scene
-          scene.render.engine='BLENDER_EEVEE'
-          scene.render.resolution_x=720
-          scene.render.resolution_y=1280
-          scene.render.resolution_percentage=100
+          s=bpy.context.scene
+          s.render.engine='BLENDER_EEVEE'
+          s.render.resolution_x=720
+          s.render.resolution_y=1280
+          s.render.resolution_percentage=100
+          s.render.image_settings.file_format='PNG'
 
-          scene.render.image_settings.file_format='PNG'
-          scene.render.film_transparent=False
-
-          scene.world.color=(0.015,0.015,0.04)
-
-          def mat(name,color,metal=0,rough=.35,emission=0):
-              m=bpy.data.materials.new(name)
-              m.diffuse_color=(*color,1)
+          def material(n,c,metal=0,rough=.3,emit=0):
+              m=bpy.data.materials.new(n)
+              m.diffuse_color=(*c,1)
               m.use_nodes=True
-              bs=m.node_tree.nodes.get('Principled BSDF')
-              bs.inputs['Base Color'].default_value=(*color,1)
-              bs.inputs['Metallic'].default_value=metal
-              bs.inputs['Roughness'].default_value=rough
-              if emission:
-                  bs.inputs['Emission Color'].default_value=(*color,1)
-                  bs.inputs['Emission Strength'].default_value=emission
+              b=m.node_tree.nodes.get('Principled BSDF')
+              b.inputs['Base Color'].default_value=(*c,1)
+              b.inputs['Metallic'].default_value=metal
+              b.inputs['Roughness'].default_value=rough
+              if emit:
+                  b.inputs['Emission Color'].default_value=(*c,1)
+                  b.inputs['Emission Strength'].default_value=emit
               return m
 
-          navy=mat('Midnight',(.012,.025,.09),.3,.3)
-          blue=mat('Electric Blue',(.04,.2,.8),.65,.23)
-          cyan=mat('Cyan',(.02,.75,1),.4,.2,2)
-          gold=mat('Gold',(.95,.55,.06),.65,.22)
-          purple=mat('Purple',(.3,.08,.65),.5,.25)
-          white=mat('White',(.8,.9,1),.15,.3)
-          black=mat('Dark',(.01,.015,.035),.2,.35)
+          blue=material('Blue',(.02,.12,.5),.5)
+          dark=material('Dark',(.015,.02,.06))
+          gold=material('Gold',(1,.55,.08),.6)
+          cyan=material('Cyan',(.02,.65,1),.4,.2,2)
+          purple=material('Purple',(.35,.08,.65),.4)
 
-          def cube(name,loc,scale,material, bevel=.1):
-              bpy.ops.mesh.primitive_cube_add(size=1,location=loc)
+          def cube(n,p,sc,ma):
+              bpy.ops.mesh.primitive_cube_add(size=1,location=p)
               o=bpy.context.object
-              o.name=name
-              o.dimensions=scale
+              o.name=n
+              o.dimensions=sc
               bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
-              o.data.materials.append(material)
-              if bevel:
-                  mod=o.modifiers.new('Soft edges','BEVEL')
-                  mod.width=bevel
-                  mod.segments=3
-                  o.modifiers.new('Weighted normals','WEIGHTED_NORMAL')
+              o.data.materials.append(ma)
+              b=o.modifiers.new('Rounded','BEVEL')
+              b.width=.12
+              b.segments=3
+              o.modifiers.new('Normals','WEIGHTED_NORMAL')
               return o
 
-          def sphere(name,loc,scale,material):
-              bpy.ops.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=loc)
+          def sphere(n,p,sc,ma):
+              bpy.ops.mesh.primitive_uv_sphere_add(segments=32,ring_count=16,location=p)
               o=bpy.context.object
-              o.name=name
-              o.scale=scale
-              o.data.materials.append(material)
+              o.name=n
+              o.scale=sc
+              o.data.materials.append(ma)
               bpy.ops.object.shade_smooth()
               return o
 
-          def torus(name,loc,major,minor,material,rot=(0,0,0)):
+          def ring(n,p,r,ma):
               bpy.ops.mesh.primitive_torus_add(
-                  major_radius=major,minor_radius=minor,
-                  location=loc,rotation=rot,major_segments=64,minor_segments=12)
+                  major_radius=r,minor_radius=.07,location=p)
               o=bpy.context.object
-              o.name=name
-              o.data.materials.append(material)
+              o.name=n
+              o.data.materials.append(ma)
               bpy.ops.object.shade_smooth()
               return o
 
-          # Floor and raised circular stage
-          cube('Floor',(0,0,-1.1),(200,200,.2),navy)
-          bpy.ops.mesh.primitive_cylinder_add(vertices=96,radius=4.2,depth=.55,location=(0,0,-.45))
-          platform=bpy.context.object
-          platform.name='Puzzle stage'
-          platform.data.materials.append(blue)
-          bev=platform.modifiers.new('Platform bevel','BEVEL')
-          bev.width=.16
-          bev.segments=4
-          platform.modifiers.new('Normals','WEIGHTED_NORMAL')
+          cube('Floor',(0,0,-1),(200,200,.2),dark)
 
-          torus('Stage neon ring',(0,0,-.12),3.9,.08,cyan)
-          torus('Outer ring',(0,0,-.65),4.15,.07,gold)
+          bpy.ops.mesh.primitive_cylinder_add(
+              vertices=96,radius=4,depth=.5,location=(0,0,-.5))
+          o=bpy.context.object
+          o.data.materials.append(blue)
+          b=o.modifiers.new('Bevel','BEVEL')
+          b.width=.12
+          b.segments=3
+          o.modifiers.new('Normals','WEIGHTED_NORMAL')
 
-          # Floating puzzle objects
-          sphere('Floating orb',(-3,1.2,1.2),(.55,.55,.55),cyan)
-          sphere('Gold orb',(3,-.2,1.5),(.38,.38,.38),gold)
-          cube('Floating cube',(-2.7,-2,1.3),(.9,.9,.9),purple)
-          torus('Floating ring',(2.4,2.1,1.4),.65,.09,gold,(math.radians(65),0,math.radians(20)))
+          ring('Neon',(0,0,-.15),3.8,cyan)
+          ring('Gold',(0,0,-.75),4.1,gold)
 
-          # Decorative vertical columns
+          sphere('Orb',(-3,1,1),(.5,.5,.5),cyan)
+          sphere('Orb2',(3,1,1),(.4,.4,.4),gold)
+          cube('Cube',(-2,-2,1),(.8,.8,.8),purple)
+          ring('Floating ring',(2,-1,1),.7,gold)
+
           for x in [-3.5,3.5]:
-              cube('Light column',(x,0,.3),(.15,.15,3.2),cyan,.04)
-              sphere('Column cap',(x,0,1.95),(.23,.23,.23),gold)
+              cube('Column',(x,0,.4),(.15,.15,3),cyan)
 
-          # Camera
           bpy.ops.object.camera_add(location=(0,-13,6))
           cam=bpy.context.object
-          cam.name='Camera'
-          target=Vector((0,0,.3))
-          direction=target-cam.location
-          cam.rotation_euler=direction.to_track_quat('-Z','Y').to_euler()
-          cam.data.lens=48
-          scene.camera=cam
+          cam.rotation_euler=(Vector((0,0,.3))-cam.location).to_track_quat('-Z','Y').to_euler()
+          s.camera=cam
 
-          # Lights
-          def area(name,loc,power,color,size):
-              bpy.ops.object.light_add(type='AREA',location=loc)
+          def light(n,p,power,col,size):
+              bpy.ops.object.light_add(type='AREA',location=p)
               l=bpy.context.object
-              l.name=name
+              l.name=n
               l.data.energy=power
-              l.data.color=color
+              l.data.color=col
               l.data.shape='DISK'
               l.data.size=size
-              l.rotation_euler=(target-l.location).to_track_quat('-Z','Y').to_euler()
+              l.rotation_euler=(Vector((0,0,0))-l.location).to_track_quat('-Z','Y').to_euler()
 
-          area('Key light',(4,-5,8),1500,(.4,.65,1),6)
-          area('Fill light',(-5,-2,4),1200,(.2,.4,1),5)
-          area('Gold rim',(0,4,6),1800,(1,.5,.15),4)
+          light('Key',(4,-5,8),1500,(.4,.65,1),6)
+          light('Fill',(-5,-2,4),1200,(.2,.4,1),5)
+          light('Rim',(0,4,6),1800,(1,.5,.15),4)
 
-          scene.camera.data.lens=50
-          scene.render.image_settings.file_format='PNG'
-          scene.render.filepath='/tmp/stage.png'
+          s.render.filepath='/tmp/stage.png'
           bpy.ops.render.render(write_still=True)
           PY
 
           LIBGL_ALWAYS_SOFTWARE=1 \
           xvfb-run -a blender -b -t 2 --python scene.py
 
-      - name: Create graphic overlays
+      - name: Create overlays
         env:
-          TITLE: ${{ inputs.title }}
           QUESTION: ${{ inputs.question }}
           ANSWER: ${{ inputs.answer }}
         run: |
           cat > graphics.py <<'PY'
-          from PIL import Image, ImageDraw, ImageFont
-          import os, math
+          from PIL import Image,ImageDraw,ImageFont
+          import os
 
           W,H=720,1280
           os.makedirs('graphics',exist_ok=True)
+          f='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 
-          font_path='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-          bold_path='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-
-          def font(size,bold=True):
-              p=bold_path if bold else font_path
-              return ImageFont.truetype(p,size)
-
-          def make(name,heading,body='',small='',number=None):
+          def make(n,h,b='',small='',num=None):
               im=Image.new('RGBA',(W,H),(0,0,0,0))
               d=ImageDraw.Draw(im)
-
-              # translucent dark panel
-              d.rounded_rectangle((42,230,678,1040),radius=42,
-                                 fill=(5,12,35,225),
-                                 outline=(30,180,255,230),width=4)
-
-              d.rounded_rectangle((90,280,630,365),radius=26,
-                                 fill=(15,60,150,220),
-                                 outline=(255,190,50,220),width=3)
-
-              d.text((360,322),heading,font=font(44),
-                     fill=(255,220,100,255),anchor='mm',
-                     direction='rtl',language='ar')
-
-              if body:
-                  d.text((360,560),body,font=font(58),
-                         fill=(255,255,255,255),
-                         anchor='mm',align='center',
-                         direction='rtl',language='ar',
-                         spacing=18,stroke_width=2,
-                         stroke_fill=(5,15,40,255))
-
-              if number is not None:
-                  d.ellipse((220,720,500,1000),
-                            fill=(10,40,120,230),
-                            outline=(255,190,50,255),width=10)
-                  d.text((360,860),str(number),font=font(170),
-                         fill=(255,255,255,255),anchor='mm')
-
+              d.rounded_rectangle((35,220,685,1060),radius=45,
+                fill=(5,12,35,230),outline=(30,180,255,255),width=5)
+              d.rounded_rectangle((90,275,630,370),radius=25,
+                fill=(15,60,150,240),outline=(255,190,50,255),width=3)
+              d.text((360,322),h,font=ImageFont.truetype(f,42),
+                fill=(255,220,100),anchor='mm',direction='rtl')
+              if b:
+                  d.text((360,560),b,font=ImageFont.truetype(f,58),
+                    fill='white',anchor='mm',align='center',
+                    direction='rtl',spacing=15)
+              if num is not None:
+                  d.ellipse((220,720,500,1000),fill=(10,40,120,240),
+                    outline=(255,190,50),width=10)
+                  d.text((360,860),str(num),font=ImageFont.truetype(f,160),
+                    fill='white',anchor='mm')
               if small:
-                  d.text((360,945),small,font=font(35),
-                         fill=(80,230,255,255),anchor='mm',
-                         direction='rtl',language='ar')
-
-              im.save('graphics/'+name+'.png')
+                  d.text((360,945),small,font=ImageFont.truetype(f,34),
+                    fill=(80,230,255),anchor='mm',direction='rtl')
+              im.save('graphics/'+n+'.png')
 
           make('intro','اختبر ذكاءك','استعد للتحدي')
           make('question','لغز اليوم',os.environ['QUESTION'],'فكر قبل أن تجيب')
+          make('pause','فكر جيدًا',os.environ['QUESTION'])
           make('answer','الإجابة الصحيحة',os.environ['ANSWER'],'هل عرفت الحل؟')
           make('outro','أحسنت التفكير','تابع المزيد من الألغاز')
+
           for n in range(7,0,-1):
-              make('timer'+str(n),'فكر جيدًا',os.environ['QUESTION'],'الوقت المتبقي',n)
-          make('pause','هل عرفت الحل؟',os.environ['QUESTION'],'')
+              make('timer'+str(n),'فكر جيدًا',
+                os.environ['QUESTION'],'الوقت المتبقي',n)
           PY
 
           python3 graphics.py
 
-      - name: Render video with audio
+      - name: Create video
         env:
           QA: ${{ inputs.question_audio }}
           AA: ${{ inputs.answer_audio }}
         run: |
           set -e
-
           mkdir -p segments
 
-          # Determine durations of supplied audio
           QD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$QA")
           AD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$AA")
 
-          echo "Question audio duration: $QD"
-          echo "Answer audio duration: $AD"
-
-          BG=/tmp/stage.png
-
           make_segment() {
             NAME="$1"
-            OVERLAY="$2"
+            OVER="$2"
             DUR="$3"
-            AUDIO="$4"
+            AUD="$4"
 
-            if [ "$AUDIO" = "silence" ]; then
+            if [ "$AUD" = "silence" ]; then
               ffmpeg -y -loglevel error \
-                -loop 1 -i "$BG" \
-                -loop 1 -i "$OVERLAY" \
+                -loop 1 -i /tmp/stage.png \
+                -loop 1 -i "$OVER" \
                 -f lavfi -i "anullsrc=r=44100:cl=stereo" \
                 -t "$DUR" \
                 -filter_complex \
-                "[0:v]scale=720:1280,format=yuv420p[v0];[v0][1:v]overlay=0:0,format=yuv420p[v]" \
+                "[0:v]scale=720:1280[v0];[v0][1:v]overlay=0:0,format=yuv420p[v]" \
                 -map "[v]" -map 2:a \
                 -r 24 -c:v libx264 -preset ultrafast -crf 24 \
                 -c:a aac -b:a 128k -ar 44100 \
                 -shortest "segments/$NAME.mp4"
             else
               ffmpeg -y -loglevel error \
-                -loop 1 -i "$BG" \
-                -loop 1 -i "$OVERLAY" \
-                -i "$AUDIO" \
+                -loop 1 -i /tmp/stage.png \
+                -loop 1 -i "$OVER" \
+                -i "$AUD" \
                 -filter_complex \
-                "[0:v]scale=720:1280,format=yuv420p[v0];[v0][1:v]overlay=0:0,format=yuv420p[v];[2:a]aresample=44100,aformat=channel_layouts=stereo[a]" \
+                "[0:v]scale=720:1280[v0];[v0][1:v]overlay=0:0,format=yuv420p[v];[2:a]aresample=44100,aformat=channel_layouts=stereo[a]" \
                 -map "[v]" -map "[a]" \
                 -r 24 -c:v libx264 -preset ultrafast -crf 24 \
                 -c:a aac -b:a 128k -ar 44100 \
@@ -304,23 +255,41 @@ jobs:
             fi
           }
 
+          # 1: Intro
           make_segment intro graphics/intro.png 3 silence
+
+          # 2: Question and question audio
           make_segment question graphics/question.png "$QD" "$QA"
 
+          # 3: Countdown 7 to 1
           for N in 7 6 5 4 3 2 1; do
             make_segment "timer$N" "graphics/timer$N.png" 1 silence
           done
 
+          # 4: Thinking pause
           make_segment pause graphics/pause.png 1.5 silence
+
+          # 5: Answer and answer audio
           make_segment answer graphics/answer.png "$AD" "$AA"
+
+          # 6: Outro
           make_segment outro graphics/outro.png 3 silence
 
-          # All clips have both video and audio streams.
-          # Concatenate using re-encoding for reliable stream compatibility.
-          : > concat.txt
-          for F in segments/*.mp4; do
-            echo "file '$F'" >> concat.txt
-          done
+          # Fixed sequence. Never use alphabetical order.
+          cat > concat.txt <<'EOF'
+          file 'segments/intro.mp4'
+          file 'segments/question.mp4'
+          file 'segments/timer7.mp4'
+          file 'segments/timer6.mp4'
+          file 'segments/timer5.mp4'
+          file 'segments/timer4.mp4'
+          file 'segments/timer3.mp4'
+          file 'segments/timer2.mp4'
+          file 'segments/timer1.mp4'
+          file 'segments/pause.mp4'
+          file 'segments/answer.mp4'
+          file 'segments/outro.mp4'
+          EOF
 
           ffmpeg -y -loglevel error \
             -f concat -safe 0 -i concat.txt \
@@ -329,16 +298,16 @@ jobs:
             -pix_fmt yuv420p -movflags +faststart \
             puzzle-video.mp4
 
-          # Verify final video and audio exist.
+          # Verify final streams
           ffprobe -v error -show_entries stream=codec_type \
-            -of csv=p=0 puzzle-video.mp4 | tee streams.txt
+            -of csv=p=0 puzzle-video.mp4 > streams.txt
 
           grep -q video streams.txt
           grep -q audio streams.txt
 
-          echo "Verified: final video contains video and audio streams."
+          echo "Video and audio verified."
 
-      - name: Upload video
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-video
