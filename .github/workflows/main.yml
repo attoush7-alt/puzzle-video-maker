@@ -39,8 +39,8 @@ jobs:
       - name: Install
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender ffmpeg xvfb python3-pil fonts-dejavu-core fonts-noto-core
-          python3 -m pip install --break-system-packages pillow arabic-reshaper python-bidi
+          sudo apt-get install -y blender ffmpeg xvfb python3-pil fonts-dejavu-core fonts-noto-core libraqm-dev libfribidi-dev libharfbuzz-dev
+          python3 -c "from PIL import ImageFont, features; print('RAQM:', features.check('raqm'))"
 
       - name: Validate audio
         env:
@@ -57,170 +57,151 @@ jobs:
         run: |
           cat > scene.py <<'PY'
           import bpy
-          import math
           from mathutils import Vector
 
           bpy.ops.object.select_all(action='SELECT')
           bpy.ops.object.delete(use_global=False)
 
-          s = bpy.context.scene
+          s=bpy.context.scene
           try:
-              s.render.engine = 'BLENDER_EEVEE_NEXT'
+              s.render.engine='BLENDER_EEVEE_NEXT'
           except:
-              s.render.engine = 'BLENDER_EEVEE'
+              s.render.engine='BLENDER_EEVEE'
 
-          s.render.resolution_x = 720
-          s.render.resolution_y = 1280
-          s.render.resolution_percentage = 100
-          s.render.image_settings.file_format = 'PNG'
-          s.render.film_transparent = False
+          s.render.resolution_x=720
+          s.render.resolution_y=1280
+          s.render.resolution_percentage=100
+          s.render.image_settings.file_format='PNG'
+          s.world.color=(.015,.015,.03)
 
-          s.render.engine = s.render.engine
-          s.render.filepath = '/tmp/stage.png'
-
-          s.world.color = (0.015, 0.015, 0.03)
-
-          # Materials
-          def mat(name, color, metal=0, rough=.35, emission=0):
-              m = bpy.data.materials.new(name)
-              m.diffuse_color = (*color, 1)
-              m.use_nodes = True
-              b = m.node_tree.nodes.get('Principled BSDF')
-              b.inputs['Base Color'].default_value = (*color, 1)
-              b.inputs['Metallic'].default_value = metal
-              b.inputs['Roughness'].default_value = rough
+          def mat(name,color,metal=0,rough=.35,emission=0):
+              m=bpy.data.materials.new(name)
+              m.diffuse_color=(*color,1)
+              m.use_nodes=True
+              b=m.node_tree.nodes.get('Principled BSDF')
+              b.inputs['Base Color'].default_value=(*color,1)
+              b.inputs['Metallic'].default_value=metal
+              b.inputs['Roughness'].default_value=rough
               if emission:
-                  b.inputs['Emission Color'].default_value = (*color, 1)
-                  b.inputs['Emission Strength'].default_value = emission
+                  b.inputs['Emission Color'].default_value=(*color,1)
+                  b.inputs['Emission Strength'].default_value=emission
               return m
 
-          navy = mat('Deep navy', (.012,.025,.09), .35,.3)
-          blue = mat('Royal blue', (.025,.12,.4), .45,.25)
-          steel = mat('Metallic steel', (.12,.2,.38), .7,.25)
-          cyan = mat('Electric cyan', (.025,.5,1), .35,.2,2.5)
-          gold = mat('Premium gold', (1,.55,.08), .7,.2,1.2)
-          purple = mat('Violet', (.22,.06,.48), .5,.25)
-          white = mat('White', (.8,.9,1), .1,.25,1)
+          navy=mat('Midnight',(.015,.025,.08),.4,.3)
+          steel=mat('Steel',(.08,.14,.32),.6,.25)
+          cyan=mat('Cyan',(.02,.55,1),.3,.2,2)
+          gold=mat('Gold',(1,.55,.08),.65,.22,1)
+          purple=mat('Purple',(.25,.08,.5),.45,.25)
+          white=mat('White',(.8,.9,1),.2,.25,1)
 
           def cube(name,pos,scale,ma,bevel=.08):
-              bpy.ops.mesh.primitive_cube_add(size=1,location=pos)
-              o = bpy.context.object
-              o.name = name
-              o.dimensions = scale
-              bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
+              bpy.ops.object.mesh.primitive_cube_add(size=1,location=pos)
+              o=bpy.context.object
+              o.name=name
+              o.dimensions=scale
+              bpy.ops.object.transform_apply(
+                  location=False,rotation=False,scale=True
+              )
               o.data.materials.append(ma)
               if bevel:
-                  b = o.modifiers.new('Rounded edges','BEVEL')
-                  b.width = bevel
-                  b.segments = 5
+                  b=o.modifiers.new('Edge finish','BEVEL')
+                  b.width=bevel
+                  b.segments=4
                   o.modifiers.new('Weighted normals','WEIGHTED_NORMAL')
               return o
 
           def sphere(name,pos,scale,ma):
-              bpy.ops.mesh.primitive_uv_sphere_add(
-                  segments=32,ring_count=20,location=pos)
-              o = bpy.context.object
-              o.name = name
-              o.scale = scale
+              bpy.ops.object.mesh.primitive_uv_sphere_add(
+                  segments=32,ring_count=20,location=pos
+              )
+              o=bpy.context.object
+              o.name=name
+              o.scale=scale
               o.data.materials.append(ma)
               bpy.ops.object.shade_smooth()
               return o
 
-          def cylinder(name,pos,radius,depth,ma):
-              bpy.ops.mesh.primitive_cylinder_add(
-                  vertices=96,radius=radius,depth=depth,location=pos)
-              o = bpy.context.object
-              o.name = name
-              o.data.materials.append(ma)
-              b = o.modifiers.new('Edge bevel','BEVEL')
-              b.width = .1
-              b.segments = 4
-              o.modifiers.new('Weighted normals','WEIGHTED_NORMAL')
-              return o
-
-          def torus(name,pos,r,ma,rot=(0,0,0),minor=.05):
-              bpy.ops.mesh.primitive_torus_add(
+          def torus(name,pos,r,ma,rot=(0,0,0),minor=.055):
+              bpy.ops.object.mesh.primitive_torus_add(
                   major_radius=r,minor_radius=minor,
                   location=pos,rotation=rot,
-                  major_segments=80,minor_segments=16)
-              o = bpy.context.object
-              o.name = name
+                  major_segments=64,minor_segments=12
+              )
+              o=bpy.context.object
+              o.name=name
               o.data.materials.append(ma)
               bpy.ops.object.shade_smooth()
               return o
 
-          # Floor
-          cube('Studio floor',(0,0,-1),(200,200,.2),navy)
+          # Floor and rear wall
+          cube('Floor',(0,0,-1),(200,200,.2),navy)
+          cube('Rear wall',(0,4,4),(18,.4,12),navy)
 
-          # Rear wall
-          cube('Studio wall',(0,5,5),(18,.4,14),navy)
-
-          # Architectural panels
+          # Architectural lighting panels
           for x in [-5,-3.8,3.8,5]:
-              cube('Wall strip',(x,4.65,4),(.14,.2,8),steel,.05)
-              sphere('Neon light',(x,4.4,6.5),(.14,.14,.14),cyan)
+              cube('Wall panel',(x,3.65,3.5),(.12,.15,7),steel,.04)
+              sphere('Panel light',(x,3.5,6),(.12,.12,.12),cyan)
 
-          # Central architectural frame
+          # Central frame
           cube('Top frame',(0,2.8,7),(7,.35,.3),gold)
           cube('Left frame',(-3.5,2.8,4.2),(.3,.35,5.6),cyan)
           cube('Right frame',(3.5,2.8,4.2),(.3,.35,5.6),cyan)
 
-          # Central platform
-          cylinder('Main platform',(0,0,-.45),3.5,.65,steel)
-          cylinder('Platform top',(0,0,-.1),3.25,.18,blue)
-          torus('Main neon ring',(0,0,-.05),3.35,cyan)
-          torus('Lower gold ring',(0,0,-.75),3.4,gold)
+          # Main podium
+          bpy.ops.mesh.primitive_cylinder_add(
+              vertices=96,radius=3.5,depth=.65,location=(0,0,-.45)
+          )
+          podium=bpy.context.object
+          podium.name='Main stage'
+          podium.data.materials.append(steel)
+          b=podium.modifiers.new('Podium bevel','BEVEL')
+          b.width=.15
+          b.segments=4
+          podium.modifiers.new('Normals','WEIGHTED_NORMAL')
 
-          # Side pillars
-          for x in [-4,4]:
-              cylinder('Pillar base',(x,0,.1),.65,.35,gold)
-              cylinder('Pillar body',(x,0,1.6),.38,2.8,steel)
-              sphere('Pillar cap',(x,0,3.2),(.5,.5,.5),gold)
-              torus('Pillar neon',(x,0,1.5),.55,cyan)
+          torus('Stage ring',(0,0,-.1),3.35,cyan)
+          torus('Outer ring',(0,0,-.8),3.5,gold)
+
+          # Pillars
+          for x in [-3.8,3.8]:
+              cube('Side pillar',(x,0,1),(.35,.35,3.8),steel)
+              sphere('Pillar crown',(x,0,3),(.4,.4,.4),gold)
+              torus('Pillar light',(x,0,1.8),.4,cyan)
 
           # Floating geometric decorations
-          sphere('Blue orb',(-2.7,1.5,2.8),(.5,.5,.5),cyan)
-          sphere('Gold orb',(2.8,1.5,3),(.4,.4,.4),gold)
-
-          cube('Floating cube',(-2.6,-1.3,2.5),(.8,.8,.8),purple)
-          cube('Small cube',(2.7,-1.2,2.5),(.6,.6,.6),gold)
-
-          torus('Floating ring',(2.5,-1.5,4),.7,gold,(.8,.2,.3))
-          torus('Floating blue ring',(-2.5,-1.5,4),.65,cyan,(.4,.5,.2))
-
-          # Decorative stars
-          for i in range(18):
-              x = ((i*37)%100)/100*9-4.5
-              z = ((i*61)%100)/100*8+1
-              sphere('Star',(x,4.2,z),(.045,.045,.045),white)
+          sphere('Blue orb',(-2.8,1.3,2),(.55,.55,.55),cyan)
+          sphere('Gold orb',(2.8,1.4,2.1),(.4,.4,.4),gold)
+          cube('Floating cube',(-2.7,-1.5,2),(.75,.75,.75),purple)
+          torus('Floating ring',(2.5,-1.5,2),.7,gold,(.8,.2,.3))
+          torus('Blue ring',(-2.5,-1.5,3),.65,cyan,(.4,.5,.2))
 
           # Camera
-          bpy.ops.object.camera_add(location=(0,-17,7))
-          cam = bpy.context.object
-          cam.rotation_euler = (
-              Vector((0,0,2.8))-cam.location
+          bpy.ops.object.camera_add(location=(0,-13,6))
+          cam=bpy.context.object
+          cam.rotation_euler=(
+              Vector((0,0,1.5))-cam.location
           ).to_track_quat('-Z','Y').to_euler()
-          cam.data.lens = 42
-          s.camera = cam
+          cam.data.lens=48
+          s.camera=cam
 
           # Lighting
           def light(name,pos,power,color,size):
               bpy.ops.object.light_add(type='AREA',location=pos)
-              l = bpy.context.object
-              l.name = name
-              l.data.energy = power
-              l.data.color = color
-              l.data.shape = 'DISK'
-              l.data.size = size
-              l.rotation_euler = (
+              l=bpy.context.object
+              l.name=name
+              l.data.energy=power
+              l.data.color=color
+              l.data.shape='DISK'
+              l.data.size=size
+              l.rotation_euler=(
                   Vector((0,0,0))-l.location
               ).to_track_quat('-Z','Y').to_euler()
 
-          light('Key light',(4,-6,9),1800,(.35,.6,1),6)
-          light('Fill light',(-5,-3,5),1500,(.2,.4,1),5)
-          light('Gold rim',(0,4,7),2200,(1,.5,.15),5)
-          light('Top light',(0,0,10),1600,(1,1,1),5)
-          light('Front light',(0,-8,3),900,(.5,.7,1),4)
+          light('Key',(4,-5,8),1600,(.35,.6,1),6)
+          light('Fill',(-5,-2,4),1200,(.2,.4,1),5)
+          light('Rim',(0,4,6),2000,(1,.5,.15),4)
+          light('Top',(0,0,9),1200,(1,1,1),5)
+          light('Front',(0,-8,3),900,(.5,.7,1),4)
 
           s.render.filepath='/tmp/stage.png'
           bpy.ops.render.render(write_still=True)
@@ -235,180 +216,185 @@ jobs:
           ANSWER: ${{ inputs.answer }}
         run: |
           cat > graphics.py <<'PY'
-          from PIL import Image, ImageDraw, ImageFont
+          from PIL import Image, ImageDraw, ImageFont, features
           import os
-          import arabic_reshaper
-          from bidi.algorithm import get_display
 
-          W,H = 720,1280
-          os.makedirs('graphics',exist_ok=True)
+          if not features.check("raqm"):
+              raise RuntimeError("Pillow RAQM Arabic shaping unavailable")
 
-          FONT_PATH = '/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf'
+          W,H=720,1280
+          os.makedirs("graphics",exist_ok=True)
+          FONT_PATH="/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf"
+          LAYOUT=ImageFont.Layout.RAQM
 
           def font(size):
-              return ImageFont.truetype(FONT_PATH,size)
+              return ImageFont.truetype(
+                  FONT_PATH,size,layout_engine=LAYOUT
+              )
 
-          def shape(text):
-              return get_display(arabic_reshaper.reshape(str(text)))
+          def measure(text,f):
+              return f.getlength(text,direction="rtl",language="ar")
 
-          def wrap(text,f,max_width):
-              words = str(text).split()
-              lines = []
-              current = ''
+          def wrap(text,f,maxw):
+              words=str(text).split()
+              lines=[]
+              current=""
               for word in words:
-                  test = word if not current else current+' '+word
-                  if f.getlength(shape(test)) <= max_width:
-                      current = test
+                  test=(current+" "+word).strip()
+                  if measure(test,f)<=maxw:
+                      current=test
                   else:
                       if current:
                           lines.append(current)
-                      current = word
+                      current=word
               if current:
                   lines.append(current)
               return lines
 
-          def fit(text,max_width,max_height,start=60,minimum=28):
+          def fit(text,maxw,maxh,start=64,minimum=28):
               for size in range(start,minimum-1,-2):
-                  f = font(size)
-                  lines = wrap(text,f,max_width)
-                  lh = int(size*1.45)
-                  if len(lines)*lh <= max_height:
+                  f=font(size)
+                  lines=wrap(text,f,maxw)
+                  lh=int(size*1.5)
+                  if len(lines)*lh<=maxh:
                       return f,lines,lh
-              f = font(minimum)
-              lines = wrap(text,f,max_width)
-              return f,lines,int(minimum*1.45)
+              f=font(minimum)
+              lines=wrap(text,f,maxw)
+              return f,lines,int(minimum*1.5)
 
-          def draw_center_lines(d,lines,f,lh,cy,fill=(255,255,255,255),stroke=2):
-              total = len(lines)*lh
-              y = cy-total/2
+          def draw_center(d,text,xy,f,fill,stroke=2):
+              d.text(
+                  xy,text,font=f,fill=fill,anchor="mm",
+                  direction="rtl",language="ar",
+                  stroke_width=stroke,
+                  stroke_fill=(5,15,40,255)
+              )
+
+          def draw_lines(d,lines,f,lh,cy,fill):
+              total=len(lines)*lh
+              y=cy-total/2+lh/2
               for line in lines:
-                  d.text(
-                      (360,y+lh/2),
-                      shape(line),
-                      font=f,
-                      fill=fill,
-                      anchor='mm',
-                      stroke_width=stroke,
-                      stroke_fill=(5,15,40,255)
+                  draw_center(
+                      d,line,(360,y),f,fill,3
                   )
-                  y += lh
+                  y+=lh
 
-          def rounded(d,box,r,fill,outline=None,width=1):
+          def rounded(d,box,r,fill,outline,width=2):
               d.rounded_rectangle(
-                  box,radius=r,fill=fill,outline=outline,width=width)
+                  box,radius=r,fill=fill,
+                  outline=outline,width=width
+              )
 
           def base():
-              im = Image.new('RGBA',(W,H),(0,0,0,0))
-              d = ImageDraw.Draw(im)
+              im=Image.new("RGBA",(W,H),(0,0,0,0))
+              d=ImageDraw.Draw(im)
               rounded(
-                  d,(30,135,690,1145),48,
-                  (5,12,35,238),(40,180,255,255),4
+                  d,(35,160,685,1120),42,
+                  (5,14,38,218),(55,190,255,255),4
               )
               rounded(
-                  d,(48,153,672,1127),40,
-                  (12,25,65,210),(255,190,55,255),2
+                  d,(49,174,671,1106),35,
+                  (12,27,65,190),(255,190,60,255),2
               )
               return im,d
 
           def header(d,text):
               rounded(
-                  d,(75,185,645,315),32,
-                  (20,55,130,255),(255,195,60,255),4
+                  d,(85,210,635,340),30,
+                  (20,55,135,245),(255,195,65,255),4
               )
-              f,lines,lh = fit(text,480,95,54,32)
-              draw_center_lines(
-                  d,lines,f,lh,250,
-                  (255,220,120,255),2
-              )
+              f,lines,lh=fit(text,450,90,52,30)
+              draw_lines(d,lines,f,lh,275,(255,220,115,255))
 
-          def question_panel(d,text,cy=520,height=300):
+          def question_box(d,text,box):
               rounded(
-                  d,(75,360,645,360+height),38,
-                  (10,30,80,255),(60,170,255,255),4
+                  d,box,35,
+                  (8,24,70,245),(60,180,255,255),4
               )
-              f,lines,lh = fit(text,470,height-65,66,32)
-              draw_center_lines(
-                  d,lines,f,lh,360+height/2,
-                  (255,255,255,255),3
+              x1,y1,x2,y2=box
+              f,lines,lh=fit(
+                  text,x2-x1-90,y2-y1-75,68,30
+              )
+              draw_lines(
+                  d,lines,f,lh,(y1+y2)/2,
+                  (255,255,255,255)
               )
 
           def footer(d,text):
               rounded(
-                  d,(110,950,610,1055),30,
-                  (15,40,100,255),(255,195,60,255),3
+                  d,(120,900,600,1015),28,
+                  (15,40,100,245),(255,195,60,255),3
               )
-              f,lines,lh = fit(text,420,80,36,22)
-              draw_center_lines(
-                  d,lines,f,lh,1002,
-                  (255,220,120,255),2
+              f,lines,lh=fit(text,400,75,34,22)
+              draw_lines(
+                  d,lines,f,lh,957,(255,220,115,255)
               )
 
           def save(im,name):
-              im.save('graphics/'+name+'.png')
+              im.save("graphics/"+name+".png")
 
           # Intro
-          im,d = base()
-          header(d,os.environ['TITLE'])
-          question_panel(d,'استعد للتحدي!',520,260)
-          footer(d,'اختبر قوة ذكائك')
-          save(im,'intro')
+          im,d=base()
+          header(d,os.environ["TITLE"])
+          question_box(d,"استعد للتحدي!",(100,440,620,760))
+          footer(d,"اختبر قوة ذكائك")
+          save(im,"intro")
 
           # Question
-          im,d = base()
-          header(d,'لغز اليوم')
-          question_panel(d,os.environ['QUESTION'],550,380)
-          footer(d,'فكر قبل أن تجيب')
-          save(im,'question')
+          im,d=base()
+          header(d,"لغز اليوم")
+          question_box(
+              d,os.environ["QUESTION"],(75,390,645,830)
+          )
+          footer(d,"فكر قبل أن تجيب")
+          save(im,"question")
 
           # Countdown
           for n in range(7,0,-1):
-              im,d = base()
-              header(d,'فكر جيدًا')
-              question_panel(d,os.environ['QUESTION'],480,300)
-
+              im,d=base()
+              header(d,"فكر جيدًا")
+              question_box(
+                  d,os.environ["QUESTION"],(75,370,645,700)
+              )
               rounded(
-                  d,(230,800,490,1060),130,
-                  (12,35,110,255),(255,195,60,255),10
+                  d,(255,760,465,970),105,
+                  (10,35,110,255),(255,195,60,255),8
               )
-              d.text(
-                  (360,930),str(n),
-                  font=font(180),
-                  fill=(255,255,255,255),
-                  anchor='mm',
-                  stroke_width=5,
-                  stroke_fill=(10,20,60,255)
+              draw_center(
+                  d,str(n),(360,865),font(150),
+                  (255,255,255,255),5
               )
-              footer(d,'الوقت المتبقي')
-              save(im,'timer'+str(n))
+              footer(d,"الوقت المتبقي")
+              save(im,"timer"+str(n))
 
           # Pause
-          im,d = base()
-          header(d,'هل عرفت الحل؟')
-          question_panel(d,os.environ['QUESTION'],550,380)
-          footer(d,'استعد لكشف الإجابة')
-          save(im,'pause')
+          im,d=base()
+          header(d,"هل عرفت الحل؟")
+          question_box(
+              d,os.environ["QUESTION"],(75,390,645,830)
+          )
+          footer(d,"استعد لكشف الإجابة")
+          save(im,"pause")
 
           # Answer
-          im,d = base()
-          header(d,'الإجابة الصحيحة')
-          rounded(
-              d,(75,420,645,820),40,
-              (45,30,10,255),(255,195,60,255),5
+          im,d=base()
+          header(d,"الحل الصحيح")
+          question_box(
+              d,os.environ["ANSWER"],(75,430,645,820)
           )
-          f,lines,lh = fit(os.environ['ANSWER'],470,300,70,32)
-          draw_center_lines(
-              d,lines,f,lh,620,
-              (255,225,120,255),3
-          )
-          footer(d,'هل كانت إجابتك صحيحة؟')
-          save(im,'answer')
+          footer(d,"هل كانت إجابتك صحيحة؟")
+          save(im,"answer")
 
           # Outro
-          im,d = base()
-          header(d,'أحسنت التفكير!')
-          question_panel(d,'هل استطعت حل اللغز؟',520,280)
-          footer(d,'تابع المزيد من الألغاز')
-          save(im,'outro')
+          im,d=base()
+          header(d,"أحسنت التفكير!")
+          question_box(
+              d,"هل استطعت حل اللغز؟",(75,430,645,800)
+          )
+          footer(d,"تابع المزيد من الألغاز")
+          save(im,"outro")
+
+          print("Arabic graphics rendered using RAQM.")
           PY
 
           python3 graphics.py
@@ -460,7 +446,7 @@ jobs:
           # Intro
           make_segment intro graphics/intro.png 3 silence
 
-          # Question and audio
+          # Question
           make_segment question graphics/question.png "$QD" "$QA"
 
           # Countdown
