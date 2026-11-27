@@ -39,10 +39,10 @@ jobs:
       - name: Install
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender ffmpeg xvfb python3-pil fonts-dejavu-core fonts-noto-core libraqm-dev libfribidi-dev libharfbuzz-dev
-          python3 -c "from PIL import ImageFont, features; print('RAQM:', features.check('raqm'))"
+          sudo apt-get install -y ffmpeg python3-pil fonts-noto-core
+          python3 -c "from PIL import Image, ImageFont, features; print('RAQM:',features.check('raqm'))"
 
-      - name: Validate audio
+      - name: Validate Audio
         env:
           QA: ${{ inputs.question_audio }}
           AA: ${{ inputs.answer_audio }}
@@ -53,161 +53,149 @@ jobs:
           ffprobe -v error "$QA"
           ffprobe -v error "$AA"
 
-      - name: Build 3D Quiz Studio
+      - name: Create Studio Background
         run: |
-          cat > scene.py <<'PY'
-          import bpy
-          from mathutils import Vector
+          cat > stage.py <<'PY'
+          from PIL import Image, ImageDraw, ImageFilter
+          import math
 
-          bpy.ops.object.select_all(action='SELECT')
-          bpy.ops.object.delete(use_global=False)
+          W,H=720,1280
+          im=Image.new("RGB",(W,H),(5,10,30))
 
-          s=bpy.context.scene
-          try:
-              s.render.engine='BLENDER_EEVEE_NEXT'
-          except:
-              s.render.engine='BLENDER_EEVEE'
+          # Deep blue gradient
+          pix=im.load()
+          for y in range(H):
+              t=y/H
+              r=int(5+12*t)
+              g=int(12+18*t)
+              b=int(35+45*t)
+              for x in range(W):
+                  pix[x,y]=(r,g,b)
 
-          s.render.resolution_x=720
-          s.render.resolution_y=1280
-          s.render.resolution_percentage=100
-          s.render.image_settings.file_format='PNG'
-          s.world.color=(.015,.015,.03)
+          # Light glows
+          glow=Image.new("RGBA",(W,H),(0,0,0,0))
+          gd=ImageDraw.Draw(glow)
 
-          def mat(name,color,metal=0,rough=.35,emission=0):
-              m=bpy.data.materials.new(name)
-              m.diffuse_color=(*color,1)
-              m.use_nodes=True
-              b=m.node_tree.nodes.get('Principled BSDF')
-              b.inputs['Base Color'].default_value=(*color,1)
-              b.inputs['Metallic'].default_value=metal
-              b.inputs['Roughness'].default_value=rough
-              if emission:
-                  b.inputs['Emission Color'].default_value=(*color,1)
-                  b.inputs['Emission Strength'].default_value=emission
-              return m
-
-          navy=mat('Midnight',(.015,.025,.08),.4,.3)
-          steel=mat('Steel',(.08,.14,.32),.6,.25)
-          cyan=mat('Cyan',(.02,.55,1),.3,.2,2)
-          gold=mat('Gold',(1,.55,.08),.65,.22,1)
-          purple=mat('Purple',(.25,.08,.5),.45,.25)
-          white=mat('White',(.8,.9,1),.2,.25,1)
-
-          def cube(name,pos,scale,ma,bevel=.08):
-              bpy.ops.object.mesh.primitive_cube_add(size=1,location=pos)
-              o=bpy.context.object
-              o.name=name
-              o.dimensions=scale
-              bpy.ops.object.transform_apply(
-                  location=False,rotation=False,scale=True
-              )
-              o.data.materials.append(ma)
-              if bevel:
-                  b=o.modifiers.new('Edge finish','BEVEL')
-                  b.width=bevel
-                  b.segments=4
-                  o.modifiers.new('Weighted normals','WEIGHTED_NORMAL')
-              return o
-
-          def sphere(name,pos,scale,ma):
-              bpy.ops.object.mesh.primitive_uv_sphere_add(
-                  segments=32,ring_count=20,location=pos
-              )
-              o=bpy.context.object
-              o.name=name
-              o.scale=scale
-              o.data.materials.append(ma)
-              bpy.ops.object.shade_smooth()
-              return o
-
-          def torus(name,pos,r,ma,rot=(0,0,0),minor=.055):
-              bpy.ops.object.mesh.primitive_torus_add(
-                  major_radius=r,minor_radius=minor,
-                  location=pos,rotation=rot,
-                  major_segments=64,minor_segments=12
-              )
-              o=bpy.context.object
-              o.name=name
-              o.data.materials.append(ma)
-              bpy.ops.object.shade_smooth()
-              return o
-
-          # Floor and rear wall
-          cube('Floor',(0,0,-1),(200,200,.2),navy)
-          cube('Rear wall',(0,4,4),(18,.4,12),navy)
-
-          # Architectural lighting panels
-          for x in [-5,-3.8,3.8,5]:
-              cube('Wall panel',(x,3.65,3.5),(.12,.15,7),steel,.04)
-              sphere('Panel light',(x,3.5,6),(.12,.12,.12),cyan)
-
-          # Central frame
-          cube('Top frame',(0,2.8,7),(7,.35,.3),gold)
-          cube('Left frame',(-3.5,2.8,4.2),(.3,.35,5.6),cyan)
-          cube('Right frame',(3.5,2.8,4.2),(.3,.35,5.6),cyan)
-
-          # Main podium
-          bpy.ops.mesh.primitive_cylinder_add(
-              vertices=96,radius=3.5,depth=.65,location=(0,0,-.45)
+          gd.ellipse(
+              (-250,100,500,950),
+              fill=(0,100,255,75)
           )
-          podium=bpy.context.object
-          podium.name='Main stage'
-          podium.data.materials.append(steel)
-          b=podium.modifiers.new('Podium bevel','BEVEL')
-          b.width=.15
-          b.segments=4
-          podium.modifiers.new('Normals','WEIGHTED_NORMAL')
+          gd.ellipse(
+              (300,100,1000,900),
+              fill=(0,160,255,65)
+          )
+          gd.ellipse(
+              (100,700,650,1450),
+              fill=(255,150,30,45)
+          )
 
-          torus('Stage ring',(0,0,-.1),3.35,cyan)
-          torus('Outer ring',(0,0,-.8),3.5,gold)
+          glow=glow.filter(ImageFilter.GaussianBlur(110))
+          im=Image.alpha_composite(im.convert("RGBA"),glow)
 
-          # Pillars
-          for x in [-3.8,3.8]:
-              cube('Side pillar',(x,0,1),(.35,.35,3.8),steel)
-              sphere('Pillar crown',(x,0,3),(.4,.4,.4),gold)
-              torus('Pillar light',(x,0,1.8),.4,cyan)
+          d=ImageDraw.Draw(im)
 
-          # Floating geometric decorations
-          sphere('Blue orb',(-2.8,1.3,2),(.55,.55,.55),cyan)
-          sphere('Gold orb',(2.8,1.4,2.1),(.4,.4,.4),gold)
-          cube('Floating cube',(-2.7,-1.5,2),(.75,.75,.75),purple)
-          torus('Floating ring',(2.5,-1.5,2),.7,gold,(.8,.2,.3))
-          torus('Blue ring',(-2.5,-1.5,3),.65,cyan,(.4,.5,.2))
+          # Background architecture
+          d.rounded_rectangle(
+              (45,100,675,1100),
+              radius=50,
+              fill=(8,22,58,255),
+              outline=(30,130,255,255),
+              width=5
+          )
 
-          # Camera
-          bpy.ops.object.camera_add(location=(0,-13,6))
-          cam=bpy.context.object
-          cam.rotation_euler=(
-              Vector((0,0,1.5))-cam.location
-          ).to_track_quat('-Z','Y').to_euler()
-          cam.data.lens=48
-          s.camera=cam
+          d.rounded_rectangle(
+              (70,125,650,1075),
+              radius=40,
+              fill=(12,28,70,255),
+              outline=(255,190,55,255),
+              width=3
+          )
 
-          # Lighting
-          def light(name,pos,power,color,size):
-              bpy.ops.object.light_add(type='AREA',location=pos)
-              l=bpy.context.object
-              l.name=name
-              l.data.energy=power
-              l.data.color=color
-              l.data.shape='DISK'
-              l.data.size=size
-              l.rotation_euler=(
-                  Vector((0,0,0))-l.location
-              ).to_track_quat('-Z','Y').to_euler()
+          # Vertical neon strips
+          for x in [105,145,575,615]:
+              d.rounded_rectangle(
+                  (x,170,x+8,900),
+                  radius=4,
+                  fill=(30,180,255,255)
+              )
 
-          light('Key',(4,-5,8),1600,(.35,.6,1),6)
-          light('Fill',(-5,-2,4),1200,(.2,.4,1),5)
-          light('Rim',(0,4,6),2000,(1,.5,.15),4)
-          light('Top',(0,0,9),1200,(1,1,1),5)
-          light('Front',(0,-8,3),900,(.5,.7,1),4)
+          # Top decorative frame
+          d.rounded_rectangle(
+              (145,180,575,225),
+              radius=20,
+              fill=(20,60,135,255),
+              outline=(255,195,60,255),
+              width=3
+          )
 
-          s.render.filepath='/tmp/stage.png'
-          bpy.ops.render.render(write_still=True)
+          # Side geometric decorations
+          d.polygon(
+              [(100,300),(180,260),(180,340)],
+              fill=(30,120,255,180)
+          )
+          d.polygon(
+              [(620,300),(540,260),(540,340)],
+              fill=(255,180,40,180)
+          )
+
+          d.ellipse(
+              (115,450,185,520),
+              fill=(20,100,255,255),
+              outline=(80,220,255,255),
+              width=5
+          )
+
+          d.ellipse(
+              (535,450,605,520),
+              fill=(255,150,20,255),
+              outline=(255,220,100,255),
+              width=5
+          )
+
+          # Lower stage
+          d.ellipse(
+              (90,900,630,1160),
+              fill=(12,35,95,255),
+              outline=(40,180,255,255),
+              width=8
+          )
+
+          d.ellipse(
+              (120,940,600,1120),
+              fill=(20,55,125,255),
+              outline=(255,190,55,255),
+              width=5
+          )
+
+          # Floor grid
+          for x in range(90,630,40):
+              d.line(
+                  (x,1080,x,1240),
+                  fill=(20,100,180,80),
+                  width=1
+              )
+
+          for y in range(1100,1240,25):
+              d.line(
+                  (70,y,650,y),
+                  fill=(20,100,180,80),
+                  width=1
+              )
+
+          # Gold decorative dots
+          for x in [130,590]:
+              for y in [650,700,750,800]:
+                  d.ellipse(
+                      (x-5,y-5,x+5,y+5),
+                      fill=(255,195,60,255)
+                  )
+
+          im.convert("RGB").save("stage.png")
+          print("Stage background created.")
           PY
 
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a blender -b -t 2 --python scene.py
+          python3 stage.py
+          test -s stage.png
 
       - name: Create Premium Graphics
         env:
@@ -394,7 +382,7 @@ jobs:
           footer(d,"تابع المزيد من الألغاز")
           save(im,"outro")
 
-          print("Arabic graphics rendered using RAQM.")
+          print("Graphics created.")
           PY
 
           python3 graphics.py
@@ -410,6 +398,8 @@ jobs:
           QD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$QA")
           AD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$AA")
 
+          test -s stage.png
+
           make_segment() {
             NAME="$1"
             OVER="$2"
@@ -418,7 +408,7 @@ jobs:
 
             if [ "$AUD" = "silence" ]; then
               ffmpeg -y -loglevel error \
-                -loop 1 -i /tmp/stage.png \
+                -loop 1 -i stage.png \
                 -loop 1 -i "$OVER" \
                 -f lavfi -i "anullsrc=r=44100:cl=stereo" \
                 -filter_complex \
@@ -430,7 +420,7 @@ jobs:
                 -shortest "segments/$NAME.mp4"
             else
               ffmpeg -y -loglevel error \
-                -loop 1 -i /tmp/stage.png \
+                -loop 1 -i stage.png \
                 -loop 1 -i "$OVER" \
                 -i "$AUD" \
                 -filter_complex \
@@ -486,12 +476,14 @@ jobs:
             -pix_fmt yuv420p -movflags +faststart \
             puzzle-video.mp4
 
-          # Verification
+          # Final verification
           ffprobe -v error -show_entries stream=codec_type \
             -of csv=p=0 puzzle-video.mp4 > streams.txt
 
           grep -q video streams.txt
           grep -q audio streams.txt
+
+          test -s puzzle-video.mp4
 
           echo "Video and audio verified."
 
