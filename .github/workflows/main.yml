@@ -1,422 +1,211 @@
-
-name: Create Puzzle Video
+name: Create Cat Video
 
 on:
   workflow_dispatch:
     inputs:
-      title:
-        description: Video title
+      scenes_json:
+        description: JSON array of 5 scenes with image_url and caption
         required: true
-        default: "اختبر ذكاءك"
-      question:
-        description: Video puzzle question
-        required: true
-        default: "هل تستطيع حل هذا اللغز؟"
-      answer:
-        description: Correct answer
-        required: true
-        default: "الإجابة هي ..."
-      question_audio:
-        description: Question audio file
-        required: true
-        default: "question.wav"
-      answer_audio:
-        description: Answer audio file
-        required: true
-        default: "answer.wav"
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  render:
+  create-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender ffmpeg python3-pil fonts-dejavu-core fonts-noto-core
+          sudo apt-get install -y ffmpeg fonts-noto-core
+          python -m pip install pillow arabic-reshaper python-bidi
 
-      - name: Validate audio
+      - name: Validate scene data
         env:
-          QA: ${{ inputs.question_audio }}
-          AA: ${{ inputs.answer_audio }}
+          SCENES_JSON: ${{ inputs.scenes_json }}
         run: |
-          set -e
-          test -f "$QA"
-          test -f "$AA"
-          ffprobe -v error "$QA"
-          ffprobe -v error "$AA"
+          python - <<'PY'
+          import json, os
 
-      - name: Build 3D studio
-        run: |
-          cat > scene.py <<'PY'
-          import bpy
-          from mathutils import Vector
+          scenes = json.loads(os.environ["SCENES_JSON"])
 
-          bpy.ops.object.select_all(action='SELECT')
-          bpy.ops.object.delete(use_global=False)
+          if not isinstance(scenes, list) or len(scenes) != 5:
+              raise SystemExit("Exactly 5 scenes are required.")
 
-          s=bpy.context.scene
-          s.render.engine='BLENDER_EEVEE'
-          s.render.resolution_x=720
-          s.render.resolution_y=1280
-          s.render.resolution_percentage=100
-          s.render.image_settings.file_format='PNG'
-          s.world.color=(.015,.015,.03)
+          for i, scene in enumerate(scenes, 1):
+              if not isinstance(scene, dict):
+                  raise SystemExit(f"Scene {i} is invalid.")
 
-          def mat(name,color,metal=0,rough=.35,emission=0):
-              m=bpy.data.materials.new(name)
-              m.diffuse_color=(*color,1)
-              m.use_nodes=True
-              b=m.node_tree.nodes.get('Principled BSDF')
-              b.inputs['Base Color'].default_value=(*color,1)
-              b.inputs['Metallic'].default_value=metal
-              b.inputs['Roughness'].default_value=rough
-              if emission:
-                  b.inputs['Emission Color'].default_value=(*color,1)
-                  b.inputs['Emission Strength'].default_value=emission
-              return m
+              url = scene.get("image_url", "")
+              if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+                  raise SystemExit(f"Scene {i} has an invalid image URL.")
 
-          navy=mat('Midnight',(.015,.025,.08),.4,.3)
-          steel=mat('Steel',(.08,.14,.32),.6,.25)
-          cyan=mat('Cyan',(.02,.55,1),.3,.2,2)
-          gold=mat('Gold',(1,.55,.08),.65,.22)
-          purple=mat('Purple',(.25,.08,.5),.45,.25)
+              caption = scene.get("caption", "")
+              if not isinstance(caption, str):
+                  raise SystemExit(f"Scene {i} caption must be text.")
 
-          def cube(name,pos,scale,ma,bevel=.08):
-              bpy.ops.mesh.primitive_cube_add(size=1,location=pos)
-              o=bpy.context.object
-              o.name=name
-              o.dimensions=scale
-              bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
-              o.data.materials.append(ma)
-              if bevel:
-                  b=o.modifiers.new('Edge finish','BEVEL')
-                  b.width=bevel
-                  b.segments=4
-                  o.modifiers.new('Weighted normals','WEIGHTED_NORMAL')
-              return o
-
-          def sphere(name,pos,scale,ma):
-              bpy.ops.mesh.primitive_uv_sphere_add(
-                  segments=32,ring_count=20,location=pos)
-              o=bpy.context.object
-              o.name=name
-              o.scale=scale
-              o.data.materials.append(ma)
-              bpy.ops.object.shade_smooth()
-              return o
-
-          def torus(name,pos,r,ma,rot=(0,0,0)):
-              bpy.ops.mesh.primitive_torus_add(
-                  major_radius=r,minor_radius=.055,
-                  location=pos,rotation=rot,
-                  major_segments=64,minor_segments=12)
-              o=bpy.context.object
-              o.name=name
-              o.data.materials.append(ma)
-              bpy.ops.object.shade_smooth()
-              return o
-
-          # Studio floor and rear wall
-          cube('Floor',(0,0,-1),(200,200,.2),navy)
-          cube('Rear wall',(0,4,4),(18,.4,12),navy)
-
-          # Wall decorations
-          for x in [-5,-3,3,5]:
-              cube('Wall panel',(x,3.65,3.5),(.12,.15,7),steel,.04)
-              sphere('Panel light',(x,3.5,6),(.12,.12,.12),cyan)
-
-          # Main platform
-          bpy.ops.mesh.primitive_cylinder_add(
-              vertices=96,radius=3.5,depth=.65,location=(0,0,-.45))
-          podium=bpy.context.object
-          podium.name='Main stage'
-          podium.data.materials.append(steel)
-          b=podium.modifiers.new('Podium bevel','BEVEL')
-          b.width=.15
-          b.segments=4
-          podium.modifiers.new('Normals','WEIGHTED_NORMAL')
-
-          torus('Stage ring',(0,0,-.1),3.35,cyan)
-          torus('Outer ring',(0,0,-.8),3.5,gold)
-
-          # Side pillars
-          for x in [-3.8,3.8]:
-              cube('Side pillar',(x,0,1),(.35,.35,3.8),steel)
-              sphere('Pillar crown',(x,0,3),(.4,.4,.4),gold)
-              torus('Pillar light',(x,0,1.8),.4,cyan)
-
-          # Floating decorations
-          sphere('Blue orb',(-2.8,1.3,2),(.55,.55,.55),cyan)
-          sphere('Gold orb',(2.8,1.4,2.1),(.4,.4,.4),gold)
-          cube('Floating cube',(-2.7,-1.5,2),(.75,.75,.75),purple)
-          torus('Floating ring',(2.5,-1.5,2),.7,gold,(.8,.2,.3))
-
-          # Camera
-          bpy.ops.object.camera_add(location=(0,-13,6))
-          cam=bpy.context.object
-          cam.rotation_euler=(
-              Vector((0,0,.5))-cam.location
-          ).to_track_quat('-Z','Y').to_euler()
-          cam.data.lens=48
-          s.camera=cam
-
-          # Lighting
-          def light(name,pos,power,color,size):
-              bpy.ops.object.light_add(type='AREA',location=pos)
-              l=bpy.context.object
-              l.name=name
-              l.data.energy=power
-              l.data.color=color
-              l.data.shape='DISK'
-              l.data.size=size
-              l.rotation_euler=(
-                  Vector((0,0,0))-l.location
-              ).to_track_quat('-Z','Y').to_euler()
-
-          light('Key',(4,-5,8),1600,(.35,.6,1),6)
-          light('Fill',(-5,-2,4),1200,(.2,.4,1),5)
-          light('Rim',(0,4,6),2000,(1,.5,.15),4)
-          light('Top',(0,0,9),1200,(1,1,1),5)
-
-          s.render.filepath='/tmp/stage.png'
-          bpy.ops.render.render(write_still=True)
+          with open("scenes.json", "w", encoding="utf-8") as f:
+              json.dump(scenes, f, ensure_ascii=False)
           PY
 
-          LIBGL_ALWAYS_SOFTWARE=1 \
-          xvfb-run -a blender -b -t 2 --python scene.py
+          mkdir -p images captions output
 
-      - name: Create overlays
-        env:
-          QUESTION: ${{ inputs.question }}
-          ANSWER: ${{ inputs.answer }}
+      - name: Download scene images
         run: |
-          cat > graphics.py <<'PY'
-          from PIL import Image,ImageDraw,ImageFont
-          import os
+          python - <<'PY'
+          import json, urllib.request
 
-          W,H=720,1280
-          os.makedirs('graphics',exist_ok=True)
-          FONT_PATH='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+          scenes = json.load(open("scenes.json", encoding="utf-8"))
 
-          def font(size):
-              return ImageFont.truetype(FONT_PATH,size)
+          for i, scene in enumerate(scenes, 1):
+              url = scene["image_url"]
 
-          def wrap_text(text,f,max_width):
-              words=text.split()
-              lines=[]
-              current=''
-              for word in words:
-                  test=word if not current else current+' '+word
-                  if f.getlength(test)<=max_width:
-                      current=test
-                  else:
-                      if current:
-                          lines.append(current)
-                      current=word
-              if current:
-                  lines.append(current)
-              return lines
-
-          def fit_text(text,max_width,max_height,start=58,minimum=28):
-              for size in range(start,minimum-1,-2):
-                  f=font(size)
-                  lines=wrap_text(text,f,max_width)
-                  lh=size*1.5
-                  if len(lines)*lh<=max_height:
-                      if all(f.getlength(x)<=max_width for x in lines):
-                          return f,lines,lh
-              f=font(minimum)
-              lines=wrap_text(text,f,max_width)
-              return f,lines,minimum*1.5
-
-          def draw_lines(draw,lines,f,line_height,center_y):
-              total=len(lines)*line_height
-              y=center_y-total/2
-              for line in lines:
-                  draw.text(
-                      (360,y),line,font=f,
-                      fill=(255,255,255,255),
-                      anchor='mt',align='center',
-                      direction='rtl',language='ar'
-                  )
-                  y+=line_height
-
-          def make(name,heading,body='',footer='',number=None):
-              im=Image.new('RGBA',(W,H),(0,0,0,0))
-              d=ImageDraw.Draw(im)
-
-              # Outer panel
-              d.rounded_rectangle(
-                  (38,205,682,1070),
-                  radius=45,fill=(5,12,30,235),
-                  outline=(40,180,255,255),width=5)
-
-              # Heading panel
-              d.rounded_rectangle(
-                  (75,260,645,370),
-                  radius=28,fill=(15,45,110,245),
-                  outline=(255,190,55,255),width=3)
-
-              d.text(
-                  (360,315),heading,font=font(44),
-                  fill=(255,220,110,255),
-                  anchor='mm',direction='rtl',language='ar')
-
-              # Body panel
-              if body:
-                  d.rounded_rectangle(
-                      (85,420,635,700),
-                      radius=32,fill=(10,25,65,240),
-                      outline=(90,140,255,255),width=3)
-
-                  f,lines,lh=fit_text(
-                      body,470,220,58,28)
-                  draw_lines(d,lines,f,lh,560)
-
-              # Countdown
-              if number is not None:
-                  d.ellipse(
-                      (225,735,495,1005),
-                      fill=(10,35,100,255),
-                      outline=(255,195,60,255),width=10)
-                  d.text(
-                      (360,870),str(number),font=font(160),
-                      fill=(255,255,255,255),anchor='mm')
-
-              # Footer
-              if footer:
-                  f,lines,lh=fit_text(
-                      footer,480,100,34,22)
-                  draw_lines(d,lines,f,lh,960)
-
-              im.save('graphics/'+name+'.png')
-
-          make('intro','اختبر ذكاءك','استعد للتحدي')
-          make('question','لغز اليوم',os.environ['QUESTION'],'فكر قبل أن تجيب')
-          make('pause','فرصة للتفكير',os.environ['QUESTION'])
-          make('answer','الحل الصحيح',os.environ['ANSWER'],'هل عرفت الإجابة؟')
-          make('outro','أحسنت التفكير','تابع المزيد من الألغاز')
-
-          for n in range(7,0,-1):
-              make(
-                  'timer'+str(n),
-                  'فكر جيدًا',
-                  os.environ['QUESTION'],
-                  'الوقت المتبقي',
-                  n
+              req = urllib.request.Request(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0"}
               )
+
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  data = response.read()
+
+              if len(data) < 1000:
+                  raise SystemExit(f"Image {i} is too small or invalid.")
+
+              with open(f"images/{i}.jpg", "wb") as f:
+                  f.write(data)
+
+          print("All 5 images downloaded.")
           PY
 
-          python3 graphics.py
-
-      - name: Render video and assemble
-        env:
-          QA: ${{ inputs.question_audio }}
-          AA: ${{ inputs.answer_audio }}
+      - name: Create Arabic captions
         run: |
-          set -e
-          mkdir -p segments
+          cat > caption.py <<'PY'
+          import json
+          from PIL import Image, ImageDraw, ImageFont
+          import arabic_reshaper
+          from bidi.algorithm import get_display
 
-          QD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$QA")
-          AD=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$AA")
+          scenes = json.load(open("scenes.json", encoding="utf-8"))
 
-          make_segment() {
-            NAME="$1"
-            OVER="$2"
-            DUR="$3"
-            AUD="$4"
+          font_path = "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"
 
-            if [ "$AUD" = "silence" ]; then
-              ffmpeg -y -loglevel error \
-                -loop 1 -i /tmp/stage.png \
-                -loop 1 -i "$OVER" \
-                -f lavfi -i "anullsrc=r=44100:cl=stereo" \
-                -filter_complex \
-                "[0:v]scale=720:1280,zoompan=z='min(zoom+0.0004,1.08)':d=1:s=720x1280:fps=24,format=yuv420p[v0];[v0][1:v]overlay=0:0,format=yuv420p[v]" \
-                -map "[v]" -map 2:a \
-                -t "$DUR" -r 24 \
-                -c:v libx264 -preset ultrafast -crf 23 \
-                -c:a aac -b:a 128k -ar 44100 \
-                -shortest "segments/$NAME.mp4"
-            else
-              ffmpeg -y -loglevel error \
-                -loop 1 -i /tmp/stage.png \
-                -loop 1 -i "$OVER" \
-                -i "$AUD" \
-                -filter_complex \
-                "[0:v]scale=720:1280,zoompan=z='min(zoom+0.0004,1.08)':d=1:s=720x1280:fps=24,format=yuv420p[v0];[v0][1:v]overlay=0:0,format=yuv420p[v];[2:a]aresample=44100,aformat=channel_layouts=stereo[a]" \
-                -map "[v]" -map "[a]" \
-                -t "$DUR" -r 24 \
-                -c:v libx264 -preset ultrafast -crf 23 \
-                -c:a aac -b:a 128k -ar 44100 \
-                "segments/$NAME.mp4"
-            fi
-          }
+          for i, scene in enumerate(scenes, 1):
+              im = Image.new("RGBA", (720, 1280), (0, 0, 0, 0))
+              draw = ImageDraw.Draw(im)
 
-          # Intro
-          make_segment intro graphics/intro.png 3 silence
+              text = scene.get("caption", "").strip()
 
-          # Question first
-          make_segment question graphics/question.png "$QD" "$QA"
+              if text:
+                  text = get_display(arabic_reshaper.reshape(text))
+                  font = ImageFont.truetype(font_path, 48)
 
-          # Countdown
-          for N in 7 6 5 4 3 2 1; do
-            make_segment "timer$N" "graphics/timer$N.png" 1 silence
+                  max_width = 660
+                  words = text.split()
+                  lines = []
+                  current = ""
+
+                  for word in words:
+                      test = (current + " " + word).strip()
+                      bbox = draw.textbbox(
+                          (0, 0), test, font=font, stroke_width=3
+                      )
+
+                      if bbox[2] - bbox[0] <= max_width:
+                          current = test
+                      else:
+                          if current:
+                              lines.append(current)
+                          current = word
+
+                  if current:
+                      lines.append(current)
+
+                  y = 950
+
+                  for line in lines:
+                      bbox = draw.textbbox(
+                          (0, 0), line, font=font, stroke_width=3
+                      )
+                      width = bbox[2] - bbox[0]
+                      x = (720 - width) // 2
+
+                      draw.text(
+                          (x, y),
+                          line,
+                          font=font,
+                          fill="white",
+                          stroke_width=4,
+                          stroke_fill="black"
+                      )
+
+                      y += 65
+
+              im.save(f"captions/{i}.png")
+
+          print("Captions created.")
+          PY
+
+          python caption.py
+
+      - name: Render 5 scenes
+        run: |
+          for i in 1 2 3 4 5; do
+
+            ffmpeg -y \
+              -loop 1 -i images/$i.jpg \
+              -loop 1 -i captions/$i.png \
+              -filter_complex \
+              "[0:v]scale=900:1600:force_original_aspect_ratio=increase,crop=900:1600,zoompan=z='min(zoom+0.0015,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=125:s=720x1280:fps=25,setsar=1[v];[v][1:v]overlay=0:0,format=yuv420p[out]" \
+              -map "[out]" \
+              -t 5 \
+              -r 25 \
+              -c:v libx264 \
+              -preset ultrafast \
+              -pix_fmt yuv420p \
+              output/scene$i.mp4
+
           done
 
-          # Pause
-          make_segment pause graphics/pause.png 1.5 silence
+      - name: Concatenate scenes
+        run: |
+          cd output
 
-          # Answer after countdown
-          make_segment answer graphics/answer.png "$AD" "$AA"
+          for i in 1 2 3 4 5; do
+            echo "file 'scene$i.mp4'" >> list.txt
+          done
 
-          # Outro
-          make_segment outro graphics/outro.png 3 silence
+          ffmpeg -y \
+            -f concat \
+            -safe 0 \
+            -i list.txt \
+            -c:v libx264 \
+            -preset ultrafast \
+            -pix_fmt yuv420p \
+            -movflags +faststart \
+            cat-video.mp4
 
-          # Explicit assembly order
-          cat > concat.txt <<'EOF'
-          file 'segments/intro.mp4'
-          file 'segments/question.mp4'
-          file 'segments/timer7.mp4'
-          file 'segments/timer6.mp4'
-          file 'segments/timer5.mp4'
-          file 'segments/timer4.mp4'
-          file 'segments/timer3.mp4'
-          file 'segments/timer2.mp4'
-          file 'segments/timer1.mp4'
-          file 'segments/pause.mp4'
-          file 'segments/answer.mp4'
-          file 'segments/outro.mp4'
-          EOF
+      - name: Verify video
+        run: |
+          test -s output/cat-video.mp4
 
-          ffmpeg -y -loglevel error \
-            -f concat -safe 0 -i concat.txt \
-            -c:v libx264 -preset ultrafast -crf 23 \
-            -c:a aac -b:a 128k \
-            -pix_fmt yuv420p -movflags +faststart \
-            puzzle-video.mp4
+          ffprobe -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1 \
+            output/cat-video.mp4
 
-          # Final verification
-          ffprobe -v error -show_entries stream=codec_type \
-            -of csv=p=0 puzzle-video.mp4 > streams.txt
-
-          grep -q video streams.txt
-          grep -q audio streams.txt
-
-          echo "Video and audio verified."
+          ffprobe -v error \
+            -select_streams v:0 \
+            -show_entries stream=width,height \
+            -of default=noprint_wrappers=1 \
+            output/cat-video.mp4
 
       - name: Upload final video
         uses: actions/upload-artifact@v4
         with:
-          name: puzzle-video
-          path: puzzle-video.mp4
-          retention-days: 7
+          name: cat-video
+          path: output/cat-video.mp4
+          retention-days: 3
           
